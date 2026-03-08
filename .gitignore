@@ -1,0 +1,10 @@
+# ------------------ Security
+*.env
+
+# ------------------ Raw Data
+Cleaning & Modeling/Raw Data/
+*.json
+
+# ------------------ Cache
+Cleaning & Modeling/__pycache__/
+*.pyc
