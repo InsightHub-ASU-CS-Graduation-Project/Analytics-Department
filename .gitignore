@@ -2,9 +2,7 @@
 *.env
 
 # ------------------ Raw Data
-Cleaning & Modeling/Raw Data/
-*.json
+Cleaning & Modeling/Raw Data/*.json
 
 # ------------------ Cache
-Cleaning & Modeling/__pycache__/
-*.pyc
+Cleaning & Modeling/__pycache__/*.pyc
