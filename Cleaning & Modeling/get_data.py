@@ -1,9 +1,10 @@
 import requests
 import json
+import time
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),'.env'))
 
 class DataFetcher:
     def __init__(self):
@@ -31,8 +32,46 @@ class DataFetcher:
             "geodata": "locations", "history": "month"
         }
 
+    
+    def __calculate_market_weights(self, endpoint_with_pages: str) -> dict:
+        market_sizes = {}
+        total_global_jobs = 0
+        
+        for country in self.countries:
+            url = f"https://api.adzuna.com/v1/api/jobs/{country}/{endpoint_with_pages}/1"
+            
+            params = self.params.copy()
+            params.update({"results_per_page": 1})
+            
+            response = requests.get(url, params = params, timeout = 30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                country_total_jobs = data.get("count", 0)
+                
+                market_sizes[country] = country_total_jobs
+                total_global_jobs += country_total_jobs
+                
+                
+                time.sleep(0.5) 
 
-    def fetch_and_save_data(self):
+            else:
+                print(f"Failed to get size for {country} (Error: {response.status_code})")
+                market_sizes[country] = 0
+                
+        country_weights = {}
+        
+        if total_global_jobs > 0:
+            for country, count in market_sizes.items():
+                percentage = (count / total_global_jobs) * 100
+                country_weights[country] = round(percentage, 2)
+                
+        country_weights = dict(sorted(country_weights.items(), key=lambda item: item[1], reverse=True))
+            
+        return country_weights
+
+
+    def fetch_and_save_data(self, total_target_jobs: int) -> None:
         """
         Fetch data from all endpoints and save each to a corresponding JSON file.
 
@@ -46,6 +85,9 @@ class DataFetcher:
         ``` 
         """
 
+        raw_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Raw Data")
+        os.makedirs(raw_data_dir, exist_ok=True)
+
         for endpoint in self.endpoints_without_pages + self.endpoints_with_pages:
             result = None
 
@@ -53,10 +95,10 @@ class DataFetcher:
                 result = self.__fetch_data_without_pages(endpoint)
 
             elif endpoint in self.endpoints_with_pages:
-                result = self.__fetch_data_with_pages(endpoint)
+                result = self.__fetch_data_with_pages(endpoint, total_target_jobs)
 
             json_string = json.dumps(result) 
-            with open(f"Raw Data/{endpoint}.json", "w") as dt:
+            with open(os.path.join(raw_data_dir, f"{endpoint}.json"), "w") as dt:
                 dt.write(json_string)
 
 
@@ -66,43 +108,103 @@ class DataFetcher:
         for country in self.countries:
             url = f"https://api.adzuna.com/v1/api/jobs/{country}/{endpoint}"
 
-            response = requests.get(url, params = self.params, timeout = 30)
+            while True:
+                try:
+                    response = requests.get(url, params = self.params, timeout = 120)
 
-            if response.status_code == 200:
-                data = response.json()
+                    if response.status_code == 200:
+                        data = response.json()
 
-                result += data.get(self.keys[endpoint], [])
-            
-            else:
-                print(f"Error: {response.status_code}")
+                        print(f"Data is Fetched Successfully for {country} in {endpoint}")
+
+                        result += data.get(self.keys[endpoint], [])
+                        break
+
+                    elif response.status_code in [503, 504]:
+                        print(
+                            f"Server overloaded/Gateaway Timeout ({response.status_code}) for {country} in {endpoint}.",
+                            f"Sleeping for 10 seconds before retrying..."
+                        )
+
+                        time.sleep(10)
+                        continue
+                    
+                    else:
+                        print(f"Error in {endpoint} for {country}: {response.status_code}")
+                        break
+                
+                except requests.exceptions.RequestException as e:
+                        print(f"Network Error while scanning {country}: {e}. Retrying in 15s...")
+
+                        time.sleep(15)
+                        continue
 
         return result
 
 
-    def __fetch_data_with_pages(self, endpoint: str) -> list:
+    def __fetch_data_with_pages(self, endpoint: str, target_total_jobs: int) -> list:
         result = []
 
-        for country in self.countries: # "Search" Loop
-            page = 1
+        market_weights = self.__calculate_market_weights(endpoint)
 
-            while True:
-                
+        total_target_pages = target_total_jobs // 50
+        optimal_pages_per_country = {}
+
+        for country, weight in market_weights.items(): # "Search" Loop
+            calculated_pages = int((weight / 100) * total_target_pages)
+
+            optimal_pages_per_country[country] = max(1, calculated_pages)
+            
+        for country in self.countries:
+            page = 1
+            max_pages = optimal_pages_per_country.get(country, 1)
+
+            with_pages_params = self.params.copy()
+
+            with_pages_params.update({
+                "results_per_page": 50,
+                "sort_by": "date"
+            })
+
+            while page < max_pages + 1:
                 url = f"https://api.adzuna.com/v1/api/jobs/{country}/{endpoint}/{page}"
 
-                response = requests.get(url, params = self.params, timeout = 30)
 
-                if response.status_code == 200:
-                    data = response.json()
-                    page_result = data.get(self.keys[endpoint], [])
+                try:
+                    response = requests.get(url, params = with_pages_params, timeout = 30)
 
-                    if not page_result:
+                    if response.status_code == 200:
+                        data = response.json()
+                        page_result = data.get(self.keys[endpoint], [])
+
+                        if not page_result:
+                            break
+                        
+                        result += page_result
+
+                        if page % 10 == 0:
+                            print(f"   - Fetched {page * 50} jobs so far for {country} in {endpoint}...")
+
+                        page += 1
+                        time.sleep(0.5)
+
+                    elif response.status_code in [503, 504]:
+                        print(
+                            f"Server overloaded/Gateaway Timeout ({response.status_code}) for {country} in {endpoint}.",
+                            f"Sleeping for 10 seconds before retrying page {page}..."
+                        )
+
+                        time.sleep(10)
+                        continue
+
+                    else:
+                        print(f"Error in {endpoint} for {country} at page {page}: {response.status_code}")
                         break
+                
+                except requests.exceptions.RequestException as e:
+                    print(f"Network Error while scanning {country}: {e}. Retrying in 15s...")
 
-                    result += page_result
-                    page += 1
-
-                else:
-                    print(f"Error: {response.status_code}")
-                    break
-            
+                    time.sleep(15)
+                    continue
+                
         return result
