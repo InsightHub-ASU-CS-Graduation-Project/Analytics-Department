@@ -44,7 +44,7 @@ search_dataframe.extract_keywords(
     remove_extracted = True,
     seniority_level = ['intern', 'trainee', 'principal', 'senior', 'mid-level', 'junior'],
     work_setup = ['remote', 'hybrid', 'onsite']
-    )
+)
 search_dataframe.extract_keywords(
     'title',
     inplace = True,
@@ -66,7 +66,10 @@ search_dataframe.loc[search_dataframe['category_tag'] == 'hr-jobs', 'category_la
 search_dataframe.loc[
     search_dataframe['category_tag'] == 'pr-advertising-marketing-jobs',
     'category_label'
-    ] = 'PR, Advertising & Marketing Jobs'
+] = 'PR, Advertising & Marketing Jobs'
+
+search_dataframe.translate_categorical_column('country', inplace = True)
+search_dataframe.translate_categorical_column('state_or_gov', inplace = True)
 
 # if __name__ == "__main__":
 #     run_pipeline()

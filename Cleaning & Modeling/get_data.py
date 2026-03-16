@@ -97,8 +97,8 @@ class DataFetcher:
             elif endpoint in self.endpoints_with_pages:
                 result = self.__fetch_data_with_pages(endpoint, total_target_jobs)
 
-            json_string = json.dumps(result) 
-            with open(os.path.join(raw_data_dir, f"{endpoint}.json"), "w") as dt:
+            json_string = json.dumps(result, ensure_ascii = False, indent = 4) 
+            with open(os.path.join(raw_data_dir, f"{endpoint}.json"), "w", encoding = 'utf-8') as dt:
                 dt.write(json_string)
 
 

@@ -1,11 +1,73 @@
-import pandas as pd
-from langdetect import detect, DetectorFactory
-import json
 import os
-from geopy.geocoders import Nominatim
+import time
+import json
+import pandas as pd
 from typing import Self
+from geopy.geocoders import Nominatim
+from deep_translator import GoogleTranslator
+from langdetect import detect, DetectorFactory
+
+
+class CacheManager:
+    def __init__(self, cache_dir: str = "Cache Data"):
+        self.cache_dir = cache_dir
+        self.cache_dir_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), self.cache_dir)
+                                           
+        self.caches = {}
+
+
+    def _get_file_path(self, func_name: str) -> str:
+        return os.path.join(self.cache_dir_path, f"{func_name}_cache.json")
+
+
+    def load_function_cache(self, func_name: str):
+        if func_name not in self.caches:
+            file_path = self._get_file_path(func_name)
+
+            if os.path.exists(file_path):
+                with open(file_path, 'r', encoding = 'utf-8') as cache:
+                    self.caches[func_name] = json.load(cache)
+            
+            else:
+                self.caches[func_name] = {}
+        
+        return self.caches[func_name]
+
+
+    def get_column_cache(self, func_name: str, col_name: str):
+        func_cache = self.load_function_cache(func_name)
+        
+        if col_name not in func_cache:
+            func_cache[col_name] = {}
+        
+        return func_cache[col_name]
+
+
+    def save_function_cache(self, func_name: str):
+        os.makedirs(self.cache_dir_path, exist_ok = True)
+        
+        file_path = self._get_file_path(func_name)
+        with open(file_path, 'w', encoding = 'utf-8') as f:
+            json.dump(self.caches[func_name], f, ensure_ascii = False, indent = 4)
+
+
+    def delete_column_cache(self, func_name: str, col_name: str):
+        func_cache = self.load_function_cache(func_name)
+        
+        if col_name in func_cache:
+            del func_cache[col_name]
+            self.save_function_cache(func_name)
+            
+            print(f"Cache for column '{col_name}' deleted from '{func_name}_cache.json'")
+        
+        else:
+            print(f"No cache found for column '{col_name}' in '{func_name}_cache.json'")
+
+
+
 
 class JsonFile(pd.DataFrame):
+    _metadata = ['cache_manager']
 
     @property
     def _constructor(self):
@@ -14,12 +76,18 @@ class JsonFile(pd.DataFrame):
 
     def __init__(self, data = None, json_file_path: str = None, *args, **kwargs) -> None:
         if json_file_path is not None:
-            with open(json_file_path, "r") as file:
+            with open(json_file_path, "r", encoding = 'utf-8') as file:
                 raw_data = json.load(file)
 
             data = pd.json_normalize(raw_data)
 
+        self.cache_manager = CacheManager()
+
         super().__init__(data = data, *args, **kwargs)
+
+
+    def clear_cache_for_column(self, func_name: str, target_col: str):
+        self.cache_manager.delete_column_cache(func_name, target_col)
 
     
     def view(self) -> pd.DataFrame:
@@ -385,6 +453,7 @@ class JsonFile(pd.DataFrame):
             source_col: str,
             remove_source_col: bool = False,
             explode_rows: bool = False,
+            cartesian_explode: bool = False,
             inplace: bool = False,
             **target_cols_and_indices
     ) -> (Self | None):
@@ -392,7 +461,8 @@ class JsonFile(pd.DataFrame):
         Extract specific elements from lists stored within a column into new columns.
 
         This method allows you to pull items out of list-like objects by their index. 
-        It can either join multiple indices into a string or explode them into separate rows.
+        It can either join multiple indices into a string, explode them into parallel 
+        separate rows, or perform a sequential cartesian product explosion.
 
         Notes:
             - **Inplace Restriction**: 
@@ -402,6 +472,10 @@ class JsonFile(pd.DataFrame):
             - **String Joining**: When providing a list of indices with 
               `explode_rows=False`, valid extracted elements are joined 
               into a single comma-separated string (NaNs are ignored).
+            - **Cartesian vs. Parallel Explode**: When exploding multiple columns, 
+              `cartesian_explode=False` (default) explodes them in parallel (requires 
+              lists to be of equal length). `cartesian_explode=True` explodes them 
+              sequentially, creating a cross-join (cartesian product) of all elements.
 
         Args:
             source_col (str): The name of the column containing list-like objects.
@@ -409,6 +483,8 @@ class JsonFile(pd.DataFrame):
                 extraction. Defaults to False.
             explode_rows (bool): If True, and an index list is provided, expands the 
                 dataframe so each extracted element gets its own row. Defaults to False.
+            cartesian_explode (bool): If True and multiple target columns are exploded, 
+                performs a sequential explode resulting in a cartesian product. Defaults to False.
             inplace (bool): If True, modifies the object directly and returns None. 
                 Defaults to False.
             **target_cols_and_indices: Keyword arguments where the key is the new 
@@ -432,8 +508,14 @@ class JsonFile(pd.DataFrame):
                 'second_val': ['B', 'Y']
 
             Usage:
-                # Extract index 0 and 2, then explode into rows
-                df.split_list_objects("coordinates", lat_lng=[0, 1], explode_rows=True)
+                # Extract index 0 and 1 into 2 new columns 'lat' and 'long'
+                df.split_list_objects("coordinates", remove_source_col=True, inplace=True, lat=[0],long=[1])
+
+                # Extract and explode in parallel
+                df.split_list_objects("skills", explode_rows=True, tech=[0, 1], soft=[2, 3])
+
+                # Extract and explode generating all combinations (Cartesian Product)
+                df.split_list_objects("attributes", explode_rows=True, cartesian_explode=True, colors=[0, 1], sizes=[2, 3])
         ```
         """
 
@@ -441,24 +523,44 @@ class JsonFile(pd.DataFrame):
             return self if not inplace else None
 
         result = self.copy() if not inplace else self
-        
-        for col, index in target_cols_and_indices.items():
-            if isinstance(index, list):
-                extracted_parts = [result[source_col].str[i] for i in index]
 
-                if explode_rows:
-                    result[col] = [[item for item in row if pd.notna(item)] for row in zip(*extracted_parts)]
+        if explode_rows and not target_cols_and_indices:
+            result = result.explode(source_col, ignore_index = True)
 
-                    result = result.explode(col, ignore_index = True)
+        elif target_cols_and_indices:
+            cols_to_explode = []
+            
+            for col, index in target_cols_and_indices.items():
+                if index is None or index == 'all':
+                    result[col] = result[source_col]
+
+                    if explode_rows:
+                        cols_to_explode.append(col)
+                
+                elif isinstance(index, list):
+                    extracted_parts = [result[source_col].str[i] for i in index]
+
+                    if explode_rows:
+                        result[col] = [[item for item in row if pd.notna(item)] for row in zip(*extracted_parts)]
+                        
+                        cols_to_explode.append(col)
+
+                    else:
+                        result[col] = [
+                            ', '.join([str(item) for item in row if pd.notna(item) and str(item).strip() != ''])
+                            for row in zip(*extracted_parts)
+                        ]
+                
+                else:
+                    result[col] = result[source_col].str[index]
+
+            if explode_rows and cols_to_explode:
+                if cartesian_explode:
+                    for col in cols_to_explode:
+                        result = result.explode(col, ignore_index = True)
 
                 else:
-                    result[col] = [
-                        ', '.join([str(item) for item in row if pd.notna(item) and str(item).strip() != ''])
-                        for row in zip(*extracted_parts)
-                    ]
-            
-            else:
-                result[col] = result[source_col].str[index]
+                    result = result.explode(cols_to_explode, ignore_index = True)
 
         if remove_source_col:
             result.drop(columns = [source_col], inplace = True)
@@ -562,6 +664,201 @@ class JsonFile(pd.DataFrame):
             
             result[col] = result[reference_col].map(mapping_dict).fillna(result[col])
 
+        return None if inplace else result
+    
+
+    def translate_conditional_column(
+        self,
+        partition_col: str,
+        detect_col: str,
+        target_col: str,
+        target_lang: str = 'en',
+        sample_size: int = 10,
+        threshold: float = 0.5,
+        inplace: bool = False
+) -> (Self | None):
+        """
+        Conditionally translate values in a target column based on language detection of a sample.
+
+        This method groups data by `partition_col`, samples text from `detect_col` to determine 
+        if the language matches `target_lang`. If the percentage of matches is below the 
+        `threshold`, the unique values in `target_col` for that partition are translated. 
+        Results are cached to minimize API calls.
+
+        Args:
+            partition_col (str): The column used to group or partition the data (e.g., 'category' or 'group_id').
+            detect_col (str): The column used to sample text for language detection.
+            target_col (str): The column containing the values that need translation.
+            target_lang (str): The ISO language code to check for and translate into. Defaults to 'en'.
+            sample_size (int): Number of rows to sample from each partition for detection. Defaults to 10.
+            threshold (float): The required ratio (0.0 to 1.0) of `target_lang` matches to skip translation. 
+                Defaults to 0.5.
+            inplace (bool): If True, modifies the object directly and returns None. Defaults to False.
+
+        Returns:
+            The modified object (self) if `inplace` is False, otherwise None.
+
+        Raises:
+            ValueError: If `threshold` is not between 0.0 and 1.0.
+
+        Example:
+        ```
+            Scenario:
+                Translate 'category_name' only for groups where the 'description' 
+                is not primarily in English.
+
+            Usage:
+                df.translate_conditional_column(
+                    partition_col="group_id", 
+                    detect_col="description", 
+                    target_col="category_name",
+                    target_lang="en",
+                    threshold=0.7
+                )
+        ```
+        """
+
+        if not (0.0 <= threshold <= 1.0):
+            raise ValueError("The 'threshold' parameter must be a float between 0.0 and 1.0")
+        
+        required_cols = [partition_col, detect_col, target_col]
+
+        if not all(col in self.columns for col in required_cols):
+            return self if not inplace else None
+
+        result = self.copy() if not inplace else self
+
+        safe_partitions = []
+        unique_partitions = result[partition_col].dropna().unique()
+
+        for partition in unique_partitions:
+            available_texts = result[result[partition_col] == partition][detect_col].dropna()
+        
+            if available_texts.empty:
+                continue
+
+            actual_sample_size = min(sample_size, len(available_texts))
+
+            sample_texts = available_texts.sample(n = actual_sample_size, random_state = 42)
+                
+            lang_match_count = 0
+            for text in sample_texts:
+                try:
+                    if detect(str(text)) == target_lang:
+                        lang_match_count += 1
+
+                except:
+                    continue
+                    
+            if lang_match_count >= (len(sample_texts) * threshold):
+                safe_partitions.append(partition)
+
+        mask_foreign = ~result[partition_col].isin(safe_partitions)
+        foreign_unique_values = result.loc[mask_foreign, target_col].dropna().unique()
+
+        if len(foreign_unique_values) == 0:
+            return None if inplace else result
+
+        func_name = "translate_conditional_column"
+
+        current_cache = self.cache_manager.get_column_cache(func_name, target_col)
+        values_to_translate = [val for val in foreign_unique_values if val not in current_cache]
+
+        if values_to_translate:
+            translator = GoogleTranslator(source = 'auto', target = target_lang)
+
+            for val in values_to_translate:
+                try:
+                    translated = translator.translate(str(val))
+                    current_cache[val] = translated
+                    
+                    time.sleep(0.2) 
+                
+                except Exception as e:
+                    print(f"Failed to translate: '{val}'. Skipping cache for this item. Error: {e}.")
+                    continue
+
+            self.cache_manager.save_function_cache(func_name)
+
+        result[target_col] = result[target_col].map(current_cache).fillna(result[target_col])
+
+        return None if inplace else result
+    
+
+    def translate_categorical_column(
+            self, 
+            target_col: str, 
+            target_lang: str = 'en', 
+            inplace: bool = False
+    ) -> (Self | None):
+        """
+        Translate all unique categories in a specific column using an automated translator.
+ 
+        This method optimizes performance and API usage by translating only unique 
+        values (categories) and utilizing a caching mechanism to avoid re-translating 
+        previously processed strings.
+
+        Args:
+            target_col (str): The name of the column containing categorical text to translate.
+            target_lang (str): The ISO language code for the target language. 
+                Defaults to 'en'.
+            inplace (bool): If True, modifies the object directly and returns None. 
+                Defaults to False.
+
+        Returns:
+            The modified object (self) if `inplace` is False, otherwise None.
+
+        Example:
+        ```
+            Initial Column: 
+                'status': ["مكتمل", "قيد الانتظار", "مكتمل"]
+
+            Operation: 
+                translate_categorical_column(target_col='status', target_lang='en')
+
+            Result:
+                'status': ["Completed", "Pending", "Completed"]
+
+            Usage:
+                df.translate_categorical_column("product_category", target_lang="fr")
+        ```
+        """
+        
+        if target_col not in self.columns:
+            return self if not inplace else None
+
+        result = self.copy() if not inplace else self
+        
+        unique_values = result[target_col].dropna().unique()
+        
+        if len(unique_values) == 0:
+            return None if inplace else result
+        
+        func_name = "translate_categorical_column"
+
+        current_cache = self.cache_manager.get_column_cache(func_name, target_col)
+
+        values_to_translate = [val for val in unique_values if val not in current_cache]
+
+        if values_to_translate:
+            translator = GoogleTranslator(source = 'auto', target = target_lang)
+
+            for val in values_to_translate:
+                try:
+                    translated = translator.translate(str(val))
+                    current_cache[val] = translated
+                
+                    time.sleep(0.2)
+                
+                except Exception as e:
+                    print(f"Failed to translate: {val}. Skipping cache for this item. Error: {e}.")
+
+                    continue
+
+            self.cache_manager.save_function_cache(func_name)
+
+        result[target_col] = result[target_col].map(current_cache).fillna(result[target_col])
+        
         return None if inplace else result
 
 
