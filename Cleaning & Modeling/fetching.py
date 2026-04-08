@@ -1,8 +1,6 @@
-import requests
-import json
-import time
-import os
-from dotenv import load_dotenv
+from Libraries import *
+from System import *
+
 
 load_dotenv(dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),'.env'))
 
@@ -31,6 +29,8 @@ class DataFetcher:
             "search": "results", "categories": "results", "top_companies": "leaderboard",
             "geodata": "locations", "history": "month"
         }
+
+        self.cache_manager = CacheManager(cache_dir = "Cache Data/Automated")
 
     
     def __calculate_market_weights(self, endpoint_with_pages: str) -> dict:
@@ -86,7 +86,7 @@ class DataFetcher:
         """
 
         raw_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Raw Data")
-        os.makedirs(raw_data_dir, exist_ok=True)
+        os.makedirs(raw_data_dir, exist_ok = True)
 
         for endpoint in self.endpoints_without_pages + self.endpoints_with_pages:
             result = None
@@ -208,3 +208,86 @@ class DataFetcher:
                     continue
                 
         return result
+    
+
+    def build_reference_lexicon(self, *source_cols, file_path: str, target_cache_key: str):
+    
+        print(f"Extracting data from '{file_path}' (Columns: {source_cols})...")
+        
+        try:
+            ext = os.path.splitext(file_path)[1].lower().replace('.', '')
+            
+            if ext == 'json':
+                print(f"Notice: '{file_path}' is already a JSON file. Exiting extraction...")
+                return None
+                
+            if ext == 'csv':
+                try:
+                    df = pd.read_csv(file_path, encoding = 'utf-8')
+                
+                except UnicodeDecodeError:
+                    print(f"Encoding fallback: Trying 'cp1252' for '{file_path}'...")
+                    
+                    df = pd.read_csv(file_path, encoding = 'cp1252')
+            
+            elif ext in ['xlsx', 'xls']:
+                df = pd.read_excel(file_path)
+                
+            else:
+                read_method = getattr(pd, f"read_{ext}", None)
+                
+                if read_method:
+                    df = read_method(file_path)
+                
+                else:
+                    print(f"Error: Pandas does not support reading '.{ext}' directly.")
+                    return None
+            
+            valid_cols = [col for col in source_cols if col in df.columns]
+            if not valid_cols:
+                print(f"Error: None of the columns {source_cols} exist in the CSV.")
+                
+                return None
+
+            func_name = "build_reference_lexicon"
+            source_cache_dict = self.cache_manager.get_column_cache(func_name, target_cache_key)
+            
+            cache_updated = False
+
+            for col in valid_cols:
+                new_data = df[col].dropna().astype(str).str.strip().str.lower().unique().tolist()
+
+                new_data_set = set(new_data)
+
+                if col not in source_cache_dict:
+                    source_cache_dict[col] = {}
+                
+                col_cache_dict = source_cache_dict[col]
+                existing_data_set = set(col_cache_dict.keys())
+
+                if new_data_set != existing_data_set:
+                    print(f"Changes detected in column '{col}'. Updating cache object...")
+
+                    col_cache_dict.clear()
+                    col_cache_dict.update({item: True for item in new_data_set})
+
+                    cache_updated = True
+                
+                else:
+                    print(f"Column '{col}' is already up-to-date.")
+
+            if cache_updated:
+                self.cache_manager.save_function_cache(func_name)
+                
+                print(f"Success: Data for '{target_cache_key}' synced and saved to {func_name}_cache.json.")
+            
+            else:
+                print(f"All columns in '{target_cache_key}' are up-to-date. No write needed.")
+
+        except FileNotFoundError:
+            print(f"Error: Could not find the file '{file_path}'.")
+        
+        except Exception as e:
+            print(f"Error during ingestion: {e}")
+
+        return None
