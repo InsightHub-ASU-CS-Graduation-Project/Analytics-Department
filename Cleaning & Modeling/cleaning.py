@@ -1,68 +1,5 @@
-import os
-import time
-import json
-import pandas as pd
-from typing import Self
-from geopy.geocoders import Nominatim
-from deep_translator import GoogleTranslator
-from langdetect import detect, DetectorFactory
-
-
-class CacheManager:
-    def __init__(self, cache_dir: str = "Cache Data"):
-        self.cache_dir = cache_dir
-        self.cache_dir_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), self.cache_dir)
-                                           
-        self.caches = {}
-
-
-    def _get_file_path(self, func_name: str) -> str:
-        return os.path.join(self.cache_dir_path, f"{func_name}_cache.json")
-
-
-    def load_function_cache(self, func_name: str):
-        if func_name not in self.caches:
-            file_path = self._get_file_path(func_name)
-
-            if os.path.exists(file_path):
-                with open(file_path, 'r', encoding = 'utf-8') as cache:
-                    self.caches[func_name] = json.load(cache)
-            
-            else:
-                self.caches[func_name] = {}
-        
-        return self.caches[func_name]
-
-
-    def get_column_cache(self, func_name: str, col_name: str):
-        func_cache = self.load_function_cache(func_name)
-        
-        if col_name not in func_cache:
-            func_cache[col_name] = {}
-        
-        return func_cache[col_name]
-
-
-    def save_function_cache(self, func_name: str):
-        os.makedirs(self.cache_dir_path, exist_ok = True)
-        
-        file_path = self._get_file_path(func_name)
-        with open(file_path, 'w', encoding = 'utf-8') as f:
-            json.dump(self.caches[func_name], f, ensure_ascii = False, indent = 4)
-
-
-    def delete_column_cache(self, func_name: str, col_name: str):
-        func_cache = self.load_function_cache(func_name)
-        
-        if col_name in func_cache:
-            del func_cache[col_name]
-            self.save_function_cache(func_name)
-            
-            print(f"Cache for column '{col_name}' deleted from '{func_name}_cache.json'")
-        
-        else:
-            print(f"No cache found for column '{col_name}' in '{func_name}_cache.json'")
-
+from Libraries import *
+from System import CacheManager
 
 
 
@@ -81,7 +18,7 @@ class JsonFile(pd.DataFrame):
 
             data = pd.json_normalize(raw_data)
 
-        self.cache_manager = CacheManager()
+        self.cache_manager = CacheManager(cache_dir = "Cache Data/Automated")
 
         super().__init__(data = data, *args, **kwargs)
 
@@ -674,9 +611,11 @@ class JsonFile(pd.DataFrame):
         target_col: str,
         target_lang: str = 'en',
         sample_size: int = 10,
+        number_of_samples: int = 3,
         threshold: float = 0.5,
+        save_every: int = 1000,
         inplace: bool = False
-) -> (Self | None):
+    ) -> (Self | None):
         """
         Conditionally translate values in a target column based on language detection of a sample.
 
@@ -732,25 +671,27 @@ class JsonFile(pd.DataFrame):
         unique_partitions = result[partition_col].dropna().unique()
 
         for partition in unique_partitions:
-            available_texts = result[result[partition_col] == partition][detect_col].dropna()
+            available_texts = result[result[partition_col] == partition][detect_col].dropna().drop_duplicates()
         
             if available_texts.empty:
                 continue
 
-            actual_sample_size = min(sample_size, len(available_texts))
+            actual_sample_size = min(sample_size, len(available_texts.unique().tolist()))
 
-            sample_texts = available_texts.sample(n = actual_sample_size, random_state = 42)
-                
             lang_match_count = 0
-            for text in sample_texts:
+            for _ in range(number_of_samples):
+                sample_texts = available_texts.sample(n = actual_sample_size)
+
+                combined_text = " . ".join(sample_texts.astype(str).tolist())
+                
                 try:
-                    if detect(str(text)) == target_lang:
+                    if detect(str(combined_text)) == target_lang:
                         lang_match_count += 1
 
                 except:
-                    continue
-                    
-            if lang_match_count >= (len(sample_texts) * threshold):
+                    pass
+            
+            if lang_match_count >= (number_of_samples * threshold):
                 safe_partitions.append(partition)
 
         mask_foreign = ~result[partition_col].isin(safe_partitions)
@@ -765,22 +706,41 @@ class JsonFile(pd.DataFrame):
         values_to_translate = [val for val in foreign_unique_values if val not in current_cache]
 
         if values_to_translate:
+            cache_updated = False
+
+            num_of_values = len(values_to_translate)
+            print(f"preparing {num_of_values} values to be translated...")
+
             translator = GoogleTranslator(source = 'auto', target = target_lang)
 
-            for val in values_to_translate:
+            for i, val in enumerate(values_to_translate):
                 try:
                     translated = translator.translate(str(val))
+
+                    if "Error 500" in translated or "Server Error" in translated:
+                        continue
+
                     current_cache[val] = translated
+
+                    cache_updated = True
                     
                     time.sleep(0.2) 
+
+                    if (i + 1) % save_every == 0:
+                        self.cache_manager.save_function_cache(func_name)
+                        print(f"Checkpoint: Safely saved {i + 1} / {num_of_values} translations to cache...")
                 
                 except Exception as e:
                     print(f"Failed to translate: '{val}'. Skipping cache for this item. Error: {e}.")
                     continue
 
-            self.cache_manager.save_function_cache(func_name)
+            if cache_updated:
+                self.cache_manager.save_function_cache(func_name)
+
+            print("All translations completed and safely cached!")
 
         result[target_col] = result[target_col].map(current_cache).fillna(result[target_col])
+        result[target_col] = result[target_col].astype(str).str.title()
 
         return None if inplace else result
     
@@ -841,12 +801,16 @@ class JsonFile(pd.DataFrame):
         values_to_translate = [val for val in unique_values if val not in current_cache]
 
         if values_to_translate:
+            cache_updated = False
+
             translator = GoogleTranslator(source = 'auto', target = target_lang)
 
             for val in values_to_translate:
                 try:
                     translated = translator.translate(str(val))
                     current_cache[val] = translated
+
+                    cache_updated = True
                 
                     time.sleep(0.2)
                 
@@ -855,13 +819,502 @@ class JsonFile(pd.DataFrame):
 
                     continue
 
-            self.cache_manager.save_function_cache(func_name)
+            if cache_updated:
+                self.cache_manager.save_function_cache(func_name)
 
         result[target_col] = result[target_col].map(current_cache).fillna(result[target_col])
         
         return None if inplace else result
+    
+    def truncate_after_substring(self, inplace: bool = False, regex: bool = True, **target_cols_and_substrings) -> (Self | None):
+        """
+        Removes specific substrings and everything following them from target columns.
+        
+        Args:
+            inplace (bool): If True, modifies the object directly and returns None. 
+                Defaults to False.
+            **target_cols_and_substrings: Keyword arguments where the key is the column 
+                name and the value is a string or a list of strings at which to cut off the text.
+
+        Returns:
+            The modified object (self) if `inplace` is False, otherwise None.
+
+        Example:
+        ```
+            Initial Data:
+                'title': ['Software Engineer - Remote', 'Data Analyst (Junior)']
+                'company': ['Tech Corp, LLC', 'Data Inc.']
+
+            Operation:
+                df.truncate_after_substring(
+                    title=['-', '('], 
+                    company=','
+                )
+
+            Result:
+                'title': ['Software Engineer', 'Data Analyst']
+                'company': ['Tech Corp', 'Data Inc']
+        ```
+        """
+        
+        if not target_cols_and_substrings:
+            return self if not inplace else None
+
+        result = self.copy() if not inplace else self
+        
+        for col, substrings in target_cols_and_substrings.items():
+            if col not in result.columns:
+                continue
+            
+            if not isinstance(substrings, list):
+                substrings = [substrings]
+                
+            for sub in substrings:
+                result[col] = result[col].str.split(sub, n = 1, regex = regex).str[0].str.strip()
+                
+        return None if inplace else result
+    
+
+    def fill_missing_coordinates(
+        self,
+        *fallback_cols,
+        lat_col: str,
+        long_col: str,
+        save_every: int = 1000,
+        inplace: bool = False
+    ) -> (Self | None):
+
+        required_cols = [lat_col, long_col]
+        if not all(col in self.columns for col in required_cols):
+            print(f"Warning: Missing coordinate columns. Skipping geocoding.")
+            return self if not inplace else None
+
+        result = self.copy() if not inplace else self
+
+        valid_fallbacks = [col for col in fallback_cols if col in result.columns]
+        if not valid_fallbacks:
+            print("Warning: No valid fallback columns found. Skipping geocoding.")
+            return None if inplace else result
+
+        mask_missing = result[lat_col].isna() | result[long_col].isna()
+        temp_query_col = "__temp_geocode_query__"
+
+        result[temp_query_col] = None
+        result.loc[mask_missing, temp_query_col] = ""
+
+        for col in valid_fallbacks:
+            col_str = result[col].astype(str).str.strip()
+
+            col_lower = col_str.str.lower()
+            mask_valid_col = (
+                result[col].notna() & 
+                (col_str != "") & 
+                (col_lower != "nan") & 
+                (col_lower != "none") &
+                (~col_str.str.isnumeric())
+            )
+
+            update_mask = mask_missing & mask_valid_col
+
+            empty_mask = update_mask & (result[temp_query_col] == "")
+            result.loc[empty_mask, temp_query_col] = col_str[empty_mask]
+
+            append_mask = update_mask & (result[temp_query_col] != "") & (~empty_mask)
+            result.loc[append_mask, temp_query_col] += ", " + col_str[append_mask]
+            
+        result.loc[result[temp_query_col] == "", temp_query_col] = None
+
+        unique_queries = result.loc[mask_missing, temp_query_col].dropna().unique()
+
+        if len(unique_queries) == 0:
+            result.drop(columns = [temp_query_col], inplace = True)
+            return None if inplace else result
+
+        func_name = "fill_missing_coordinates"
+        current_cache = self.cache_manager.get_column_cache(func_name, "geocode_queries")
+        
+        queries_to_fetch = [q for q in unique_queries if q not in current_cache]
+
+        if queries_to_fetch:
+            cache_updated = False
+
+            num_of_queries = len(queries_to_fetch)
+            print(f"preparing {num_of_queries} locations to be geocoded...")
+            
+            geolocator = Nominatim(user_agent = "jsonfile_geocoding_pipeline")
+            geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1)
+
+            for i, query in enumerate(queries_to_fetch):
+                try:
+                    current_search = query
+                    location = None
+                    
+                    while current_search:
+                        location = geocode(current_search)
+
+                        if location:
+                            break
+
+                        if ',' in current_search:
+                            current_search = current_search.rsplit(',', 1)[1].strip()
+                        else:
+                            break
+
+                    if location:
+                        current_cache[query] = (location.latitude, location.longitude)
+                        
+                        cache_updated = True
+
+                    else:
+                        print(f"Location not found for '{query}'. Not caching.")
+                        pass
+
+                    if (i + 1) % save_every == 0:
+                        self.cache_manager.save_function_cache(func_name)
+                        print(f"Checkpoint: Safely saved {i + 1} / {num_of_queries} locations to cache...")
+                        
+                except Exception as e:
+                    print(f"Failed to geocode: '{query}'. Skipping cache for this item. Error: {e}.")
+                    continue
+
+            if cache_updated:
+                self.cache_manager.save_function_cache(func_name)
+
+            print("All geocoding completed and safely cached!")
+
+        mapped_coords = result[temp_query_col].map(current_cache)
+        
+        valid_mapped = mapped_coords.notna()
+        update_mask = mask_missing & valid_mapped
+        
+        result.loc[update_mask, lat_col] = mapped_coords[update_mask].str[0].fillna(result[lat_col])
+        result.loc[update_mask, long_col] = mapped_coords[update_mask].str[1].fillna(result[long_col])
+
+        result.drop(columns = [temp_query_col], inplace = True)
+
+        return None if inplace else result
 
 
+    def convert_to_usd(
+        self,
+        *target_cols,
+        country_col: str,
+        year_col: str,
+        new_cols: bool = True,
+        round_decimals: int | None = None,
+        inplace: bool = False
+    ):
+        required_cols = [country_col, year_col]
+        if not all(col in self.columns for col in required_cols):
+            print(f"Warning: Missing required columns: {required_cols}. Skipping conversion.")
+            
+            return self if not inplace else None
+        
+        result = self.copy() if not inplace else self
+
+        valid_cols = [col for col in target_cols if col in result.columns]
+        if not valid_cols:
+            print("Warning: No valid target columns found.")
+            
+            return None if inplace else result
+        
+        func_name = "convert_to_usd"
+        
+        currency_cache = self.cache_manager.get_column_cache(func_name, "currency_codes")
+        rates_cache = self.cache_manager.get_column_cache(func_name, "exchange_rates")
+        
+        cache_updated = False
+
+        unique_pairs = result[[country_col, year_col]].drop_duplicates().dropna()
+        
+        min_year_limit = int(result[year_col].min())
+
+        rates_mapping = {}
+        
+        for orig_c, orig_y in zip(unique_pairs[country_col], unique_pairs[year_col]):
+            c_name = str(orig_c).strip()
+            
+            curr_code = currency_cache.get(c_name)
+            if not curr_code and c_name not in currency_cache:
+                try:
+                    country = pycountry.countries.search_fuzzy(c_name)[0]
+                    country_alpha2 = country.alpha_2
+
+
+                    currencies = get_territory_currencies(country_alpha2)
+
+                    if currencies:
+                        curr_code = currencies[0]
+                        currency_cache[c_name] = curr_code
+                        
+                        cache_updated = True
+                    else:
+                        curr_code = None
+                
+                except:
+                    curr_code = None
+                
+            
+            rate = None
+            
+            if curr_code:
+                if curr_code.upper() == 'USD':
+                    rate = 1.0
+                
+                else:
+                    current_lookback_year = int(orig_y)
+                    while current_lookback_year >= min_year_limit:
+                        y_str = str(current_lookback_year)
+
+                        rate_key = f"{curr_code}_{y_str}"
+                        rate = rates_cache.get(rate_key)
+                        
+                        if rate:
+                            break
+
+                        try:
+                            print(f"Fetching rate for {curr_code} in {y_str}...")
+                            
+                            ticker = yf.Ticker(f"{curr_code}=X")
+                            hist = ticker.history(start = f"{y_str}-01-01", end = f"{y_str}-12-31")
+                            
+                            if not hist.empty:
+                                rate = hist['Close'].mean()
+                                rates_cache[rate_key] = rate
+                        
+                                cache_updated = True
+                                break
+                        
+                        except:
+                            pass
+
+                        current_lookback_year -= 1    
+                            
+            rates_mapping[(orig_c, orig_y)] = rate
+            
+        if cache_updated:
+            self.cache_manager.save_function_cache(func_name)
+            
+        rates_df = pd.Series(rates_mapping).reset_index()
+        if not rates_df.empty:
+            rates_df.columns = [country_col, year_col, '_conversion_rate']
+            
+            temp_df = result.reset_index().merge(rates_df, on=[country_col, year_col], how = 'left').set_index('index')
+            
+            for col in valid_cols:
+                col_name = f"{col}_usd" if new_cols else col
+                result[col_name] = result[col] / temp_df['_conversion_rate']
+
+                if round_decimals is not None:
+                    result[col_name] = result[col_name].round(round_decimals)
+
+        return None if inplace else result
+
+
+    def handle_outliers(
+        self,
+        *target_cols,
+        hierarchy_cols: list,
+        min_samples: int = 5,
+        inplace: bool = False
+    ) -> (Self | None):
+        
+        if not hierarchy_cols:
+            print("Warning: No hierarchy columns provided.")
+            return self if not inplace else None
+
+        result = self.copy() if not inplace else self
+
+        for target_col in target_cols:
+            if target_col not in result.columns:
+                continue
+            
+            processed_mask = pd.Series(False, index = result.index)
+            col_outliers_count = 0
+            
+            current_hierarchy = hierarchy_cols.copy()
+            level = 1
+            
+            while current_hierarchy:
+                group_name = " + ".join(current_hierarchy)
+                unprocessed_mask = (~processed_mask) & result[target_col].notna()
+                
+                if unprocessed_mask.sum() == 0:
+                    break
+                
+                grouped = result.groupby(current_hierarchy, dropna = False)[target_col]
+                
+                group_sizes = grouped.transform('count')
+                valid_group_mask = group_sizes >= min_samples
+
+                valid_data = result[valid_group_mask]
+                
+                if not valid_data.empty:
+                    valid_grouped = valid_data.groupby(current_hierarchy, dropna = False)[target_col]
+
+                    q1 = valid_grouped.quantile(0.25).rename('q1')
+                    q3 = valid_grouped.quantile(0.75).rename('q3')
+                    
+                    bounds = pd.concat([q1, q3], axis = 1).reset_index()
+                    iqr = bounds['q3'] - bounds['q1']
+        
+                    bounds['lower_bound'] = bounds['q1'] - 1.5 * iqr
+                    bounds['upper_bound'] = bounds['q3'] + 1.5 * iqr
+
+                    merged_df = result.reset_index().merge(
+                            bounds.drop(columns = ['q1', 'q3']),
+                            on = current_hierarchy,
+                            how = 'left'
+                        ).set_index('index')
+                    
+                    is_outlier = (
+                        valid_group_mask & unprocessed_mask & 
+                        merged_df['lower_bound'].notna() & 
+                        ((result[target_col] < merged_df['lower_bound']) | 
+                        (result[target_col] > merged_df['upper_bound']))
+                    )
+
+                    new_outliers_count = is_outlier.sum()
+                    col_outliers_count += new_outliers_count
+
+                    if new_outliers_count > 0:
+                        result.loc[is_outlier, target_col] = np.nan
+                
+                processed_mask = processed_mask | valid_group_mask
+                
+                current_hierarchy.pop()
+                level += 1
+
+        return None if inplace else result
+    
+
+    def drop_outliers(
+        self,
+        *target_cols,
+        hierarchy_cols: list,
+        min_samples: int = 5,
+        inplace: bool = False
+    ):
+        
+        if not hierarchy_cols:
+            print("Warning: No hierarchy columns provided.")
+            return self if not inplace else None
+
+        result = self.copy() if not inplace else self
+        outliers_to_drop = set()
+
+        for target_col in target_cols:
+            if target_col not in result.columns:
+                continue
+            
+            processed_mask = pd.Series(False, index = result.index)
+            col_outliers_count = 0
+            
+            current_hierarchy = hierarchy_cols.copy()
+            level = 1
+            
+            while current_hierarchy:
+                unprocessed_mask = (~processed_mask) & result[target_col].notna()
+                
+                if unprocessed_mask.sum() == 0:
+                    break
+                
+                grouped = result.groupby(current_hierarchy, dropna = False)[target_col]
+                
+                group_sizes = grouped.transform('count')
+                valid_group_mask = group_sizes >= min_samples
+                
+                valid_data = result[valid_group_mask]
+                
+                if not valid_data.empty:
+                    valid_grouped = valid_data.groupby(current_hierarchy, dropna = False)[target_col]
+                    
+                    q1 = valid_grouped.quantile(0.25).rename('q1')
+                    q3 = valid_grouped.quantile(0.75).rename('q3')
+                    
+                    bounds = pd.concat([q1, q3], axis = 1).reset_index()
+                    iqr = bounds['q3'] - bounds['q1']
+                    bounds['lower_bound'] = bounds['q1'] - 1.5 * iqr
+                    bounds['upper_bound'] = bounds['q3'] + 1.5 * iqr
+
+                    merged_df = result.reset_index().merge(
+                            bounds.drop(columns = ['q1', 'q3']),
+                            on = current_hierarchy,
+                            how = 'left'
+                        ).set_index('index')
+                    
+                    is_outlier = (
+                        valid_group_mask & unprocessed_mask & 
+                        merged_df['lower_bound'].notna() & 
+                        ((result[target_col] < merged_df['lower_bound']) | 
+                         (result[target_col] > merged_df['upper_bound']))
+                    )
+
+                    new_outliers_count = is_outlier.sum()
+                    col_outliers_count += new_outliers_count
+
+                    if new_outliers_count > 0:
+                        outliers_to_drop.update(result[is_outlier].index)
+                
+                processed_mask = processed_mask | valid_group_mask
+                
+                current_hierarchy.pop()
+                level += 1
+
+        if outliers_to_drop: 
+            result.drop(index = list(outliers_to_drop), inplace = True)
+
+        return None if inplace else result
+
+
+    def fill_missing(
+        self,
+        *target_cols,
+        strategy: str = 'median',
+        hierarchy_cols: list | str = None,
+        inplace: bool = False
+    ):
+        result = self.copy() if not inplace else self
+        
+        valid_cols = [col for col in target_cols if col in result.columns]
+        if not valid_cols:
+            print("Warning: No valid target columns found for imputation.")
+            return None if inplace else result
+
+        strategy = str(strategy).lower()
+        if strategy not in ['median', 'mean', 'mode', 'mod']:
+            print(f"Error: Invalid strategy '{strategy}'.")
+            return None if inplace else result
+
+        if isinstance(hierarchy_cols, str):
+            hierarchy_cols = [hierarchy_cols]
+
+        valid_group = [col for col in hierarchy_cols if col in result.columns] if hierarchy_cols else []
+
+        for col in valid_cols:
+            if result[col].isna().sum() == 0:
+                continue
+
+            current_group = valid_group.copy()
+            
+            while len(current_group) > 0 and result[col].isna().sum() > 0:
+                if strategy in ['median', 'mean']:
+                    fill_vals = result.groupby(current_group, dropna = False)[col].transform(strategy)
+                    
+                    result[col] = result[col].fillna(fill_vals)
+                
+                else:
+                    counts = result.groupby(current_group + [col], dropna = False).size().reset_index(name = '_count')
+                    counts = counts.sort_values(current_group + ['_count'], ascending = [True] * len(current_group) + [False])
+                    
+                    modes_df = counts.drop_duplicates(subset = current_group).rename(columns = {col: '_mode_val'})
+                    
+                    temp_df = result.reset_index().merge(modes_df[current_group + ['_mode_val']], on = current_group, how = 'left').set_index('index')
+                    result[col] = result[col].fillna(temp_df['_mode_val'])
+
+                current_group.pop()
+
+        return None if inplace else result
 
 
 class SearchFile(JsonFile):
@@ -872,6 +1325,201 @@ class SearchFile(JsonFile):
             kwargs['json_file_path'] = os.path.join(raw_data_dir, f"search.json")
 
         super().__init__(data = data, *args, **kwargs)
+
+
+    def extract_entities_nlp(
+        self, 
+        *source_cols, 
+        lexicon_source: str | dict, 
+        save_every: int = 1000, 
+        inplace: bool = False,
+        noisey_terms: set | None = None,
+        **target_cols_and_json_keys
+    ) -> (Self | None):
+        if not target_cols_and_json_keys:
+            print("Error: You must provide at least one target column and JSON key via kwargs.")
+            
+            return None if inplace else self.copy()
+
+        if isinstance(lexicon_source, str):
+            try:
+                with open(lexicon_source, 'r', encoding = 'utf-8') as f:
+                    lexicon_data = json.load(f)
+            
+            except Exception as e:
+                print(f"Error loading JSON file: {e}")
+                
+                return None if inplace else self.copy()
+        else:
+            lexicon_data = lexicon_source
+
+        term_dict = {}
+
+        for target_col, json_key in target_cols_and_json_keys.items():
+            keys_to_match = json_key if isinstance(json_key, list) else [json_key]
+            extracted_terms = set()
+            
+            stack = [(lexicon_data, False)]
+            
+            while stack:
+                current_node, is_inside = stack.pop()
+                
+                if isinstance(current_node, dict):
+                    for k, v in current_node.items():
+                        current_is_target = is_inside or (str(k) in keys_to_match)
+                        
+                        if current_is_target and isinstance(v, bool) and v is True:
+                            extracted_terms.add(str(k).strip().lower())
+                        
+                        elif current_is_target and isinstance(v, str):
+                            extracted_terms.add(str(v).strip().lower())
+                        
+                        elif isinstance(v, (dict, list)):
+                            stack.append((v, current_is_target))
+                            
+                elif isinstance(current_node, list):
+                    for item in current_node:
+                        if is_inside and isinstance(item, str):
+                            extracted_terms.add(str(item).strip().lower())
+                        
+                        elif isinstance(item, (dict, list)):
+                            stack.append((item, is_inside))
+
+            if extracted_terms:
+                term_dict[target_col] = list(extracted_terms)
+            
+            else:
+                print(f"Warning: No data found for keys '{keys_to_match}'. Skipping '{target_col}'.")
+
+        if not term_dict:
+            print("Error: No valid terms extracted from any specified JSON keys.")
+            
+            return None if inplace else self.copy()
+
+      
+        valid_sources = [col for col in source_cols if col in self.columns]
+        if not valid_sources:
+            print("Warning: No valid source columns found.")
+            
+            return None if inplace else self.copy()
+
+        result = self.copy() if not inplace else self
+        combined_series = result[valid_sources[0]].fillna('').astype(str)
+        
+        for col in valid_sources[1:]:
+            combined_series += " " + result[col].fillna('').astype(str)
+            
+        combined_text = combined_series.str.strip()
+        valid_mask = combined_text != ""
+        all_valid_texts = combined_text[valid_mask].unique().tolist()
+        
+        if not all_valid_texts:
+            print("No valid text found in the specified columns.")
+            return None if inplace else result
+
+    
+        func_name = "extract_entities_nlp"
+        caches = {}
+        
+        for target_col in term_dict.keys():
+            cache_obj = self.cache_manager.get_column_cache(func_name, target_col)
+            
+            caches[target_col] = cache_obj if isinstance(cache_obj, dict) else {}
+
+        texts_to_process = [
+            text for text in all_valid_texts 
+            if any(text not in caches[col]
+            for col in term_dict.keys())
+        ]
+
+        if texts_to_process:
+            print(f"Loading NLP Model and building Multi-Label Matcher...")
+            nlp = spacy.load("en_core_web_sm")
+            matcher = Matcher(nlp.vocab)
+            
+            for col_name, terms in term_dict.items():
+                all_patterns = []
+                
+                for term_doc in nlp.pipe(terms, disable = ["parser", "ner"]):
+                    pattern_lemma = []
+                    pattern_lower = []
+                   
+                    for token in term_doc:
+                        pattern_lemma.append({"LEMMA": {"IN": [token.lemma_.lower(), token.lemma_.title()]}})
+                        
+                        pattern_lower.append({"LOWER": token.text.lower()})
+                    
+                    if pattern_lemma:
+                        all_patterns.append(pattern_lemma)
+                    
+                    if pattern_lower:
+                        all_patterns.append(pattern_lower)
+                
+                matcher.add(col_name, all_patterns) 
+            
+            num_texts = len(texts_to_process)
+            print(f"Extracting smart entities from {num_texts} rows simultaneously...")
+            
+            cache_updated = False
+
+            for i, doc in enumerate(nlp.pipe(texts_to_process, batch_size = 100)):
+                original_text = texts_to_process[i]
+                found_entities = {col: set() for col in term_dict.keys()}
+                
+                try:
+                    matches = matcher(doc)
+                   
+                    for match_id, start, end in matches:
+                        col_name = nlp.vocab.strings[match_id]
+                        span = doc[start:end]
+                        clean_skill = " ".join([t.lemma_ for t in span]).title()
+                        
+                        is_valid = True
+                        
+                        if len(clean_skill) == 1:
+                            if not span.text.isupper() or not span[0].is_alpha:
+                                is_valid = False
+                                
+                        if len(span) == 1 and is_valid:
+                            invalid_pos = {"VERB", "ADV", "PRON", "DET", "ADP", "CCONJ", "SCONJ", "AUX", "SYM", "PUNCT"}
+                            
+                            if span[0].pos_ in invalid_pos:
+                                is_valid = False
+
+                        if clean_skill.lower() in noisey_terms:
+                            is_valid = False
+
+                        if is_valid:
+                            found_entities[col_name].add(clean_skill)
+                            
+                    for col in term_dict.keys():
+                        caches[col][original_text] = list(found_entities[col])
+                        
+                    cache_updated = True
+                
+                except Exception as e:
+                    print(f"Error processing text snippet: {e}")
+                
+                if (i + 1) % save_every == 0 and cache_updated:
+                    for col in term_dict.keys():
+                        self.cache_manager.save_function_cache(func_name)
+                    
+                    print(f"Checkpoint: Safely saved {i + 1} / {num_texts}...")
+                    
+                    cache_updated = False
+
+            if cache_updated:
+                for col in term_dict.keys():
+                    self.cache_manager.save_function_cache(func_name)
+                
+                print("All NLP extraction completed and safely cached!")
+        else:
+            print("All requested data is already cached. No NLP processing needed.")
+
+        for col in term_dict.keys():
+            result[col] = [caches[col].get(text, []) for text in combined_text]
+            
+        return None if inplace else result
 
 
 class CategoriesFile(JsonFile):
