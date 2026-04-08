@@ -1317,6 +1317,33 @@ class JsonFile(pd.DataFrame):
         return None if inplace else result
 
 
+    def save_to_json(self, file_path: str, orient: str = 'records', force_ascii: bool = False, indent: int = 4) -> None:
+        
+        json_str = self.to_json(orient = orient, force_ascii = force_ascii)
+        current_data = json.loads(json_str)
+
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, 'r', encoding = 'utf-8') as f:
+                    existing_data = json.load(f)
+                
+                if current_data == existing_data:
+                    print(f"No changes detected. '{os.path.basename(file_path)}' is already up to date. Skipping save.")
+                    
+                    return None
+                    
+            except Exception as e:
+                print(f"Warning: Could not read existing file ({e}). Overwriting...")
+
+        os.makedirs(os.path.dirname(file_path), exist_ok = True)
+        
+        self.to_json(file_path, orient = orient, force_ascii = force_ascii, indent = indent)
+        
+        print(" Save completed successfully!")
+
+        return None
+
+
 class SearchFile(JsonFile):
     def __init__(self, data = None, *args, **kwargs) -> None:
         if data is None and 'json_file_path' not in kwargs:
@@ -1336,6 +1363,10 @@ class SearchFile(JsonFile):
         noisey_terms: set | None = None,
         **target_cols_and_json_keys
     ) -> (Self | None):
+        
+        if noisey_terms is None:
+            noisey_terms = set()
+
         if not target_cols_and_json_keys:
             print("Error: You must provide at least one target column and JSON key via kwargs.")
             

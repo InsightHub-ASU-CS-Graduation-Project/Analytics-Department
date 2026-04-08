@@ -289,3 +289,10 @@ fetcher = DataFetcher()
 
 search_dataframe = SearchFile()
 search_dataframe = clean_data(dataframe = search_dataframe)
+
+search_dataframe.save_to_json(
+    os.path.join(current_dir, 'Cleaned Data/search_data.json'),
+    orient = 'records',
+    force_ascii = False,
+    indent = 4
+)
