@@ -4,14 +4,46 @@ from System import CacheManager
 
 
 class JsonFile(pd.DataFrame):
+    """
+    Extend `pandas.DataFrame` with project-specific cleaning, translation,
+    enrichment, and export helpers.
+
+    Notes:
+        Instances keep a `CacheManager` in metadata so cached helper methods can
+        reuse translation, geocoding, and currency results across runs.
+    """
+
     _metadata = ['cache_manager']
 
     @property
     def _constructor(self):
+        """
+        Preserve the custom dataframe subclass during pandas operations.
+
+        Returns:
+            type: The current subclass type so chained operations continue to
+            produce `JsonFile`-derived objects instead of plain dataframes.
+        """
         return type(self)
 
 
     def __init__(self, data = None, json_file_path: str = None, *args, **kwargs) -> None:
+        """
+        Initialize the custom dataframe from in-memory data or a JSON file.
+
+        Args:
+            data: Optional tabular data passed directly to `pandas.DataFrame`.
+            json_file_path (str, optional): Path to a JSON file whose content
+                will be normalized into tabular form before dataframe
+                initialization.
+            *args: Additional positional arguments forwarded to
+                `pandas.DataFrame`.
+            **kwargs: Additional keyword arguments forwarded to
+                `pandas.DataFrame`.
+
+        Returns:
+            None
+        """
         if json_file_path is not None:
             with open(json_file_path, "r", encoding = 'utf-8') as file:
                 raw_data = json.load(file)
@@ -24,6 +56,16 @@ class JsonFile(pd.DataFrame):
 
 
     def clear_cache_for_column(self, func_name: str, target_col: str):
+        """
+        Delete a cached column bucket for one of the helper methods.
+
+        Args:
+            func_name (str): Name of the cached helper function.
+            target_col (str): Nested cache key to remove, usually a column name.
+
+        Returns:
+            None
+        """
         self.cache_manager.delete_column_cache(func_name, target_col)
 
     
@@ -883,6 +925,30 @@ class JsonFile(pd.DataFrame):
         save_every: int = 1000,
         inplace: bool = False
     ) -> (Self | None):
+        """
+        Fill missing latitude and longitude values by geocoding fallback location
+        text.
+
+        Notes:
+            The method builds a location query from the supplied fallback
+            columns, caches geocoding results, and progressively shortens failed
+            queries from right to left to improve match chances. Existing valid
+            coordinates are preserved and only missing coordinate fields are
+            updated.
+
+        Args:
+            *fallback_cols: Ordered columns used to build the geocoding query.
+            lat_col (str): Latitude column name.
+            long_col (str): Longitude column name.
+            save_every (int): Cache checkpoint frequency while geocoding.
+                Defaults to 1000.
+            inplace (bool): If True, modifies the object directly and returns
+                None. Defaults to False.
+
+        Returns:
+            Self | None: The dataframe with completed coordinates when
+            `inplace=False`, otherwise None.
+        """
 
         required_cols = [lat_col, long_col]
         if not all(col in self.columns for col in required_cols):
@@ -985,10 +1051,14 @@ class JsonFile(pd.DataFrame):
         mapped_coords = result[temp_query_col].map(current_cache)
         
         valid_mapped = mapped_coords.notna()
-        update_mask = mask_missing & valid_mapped
+        lat_update_mask = result[lat_col].isna() & valid_mapped
+        long_update_mask = result[long_col].isna() & valid_mapped
         
-        result.loc[update_mask, lat_col] = mapped_coords[update_mask].str[0].fillna(result[lat_col])
-        result.loc[update_mask, long_col] = mapped_coords[update_mask].str[1].fillna(result[long_col])
+        if lat_update_mask.any():
+            result.loc[lat_update_mask, lat_col] = mapped_coords[lat_update_mask].str[0]
+
+        if long_update_mask.any():
+            result.loc[long_update_mask, long_col] = mapped_coords[long_update_mask].str[1]
 
         result.drop(columns = [temp_query_col], inplace = True)
 
@@ -1004,6 +1074,33 @@ class JsonFile(pd.DataFrame):
         round_decimals: int | None = None,
         inplace: bool = False
     ):
+        """
+        Convert numeric salary-like columns into USD using country currency codes
+        and year-based exchange rates.
+
+        Notes:
+            Currency codes and exchange rates are cached to reduce repeated
+            lookups. For non-USD currencies, the method requests historical
+            exchange-rate data by year and can optionally fall back to earlier
+            years when data for the requested year is unavailable.
+
+        Args:
+            *target_cols: Numeric columns to convert.
+            country_col (str): Column containing the country name used to infer
+                the local currency.
+            year_col (str): Column containing the reference year for historical
+                exchange rates.
+            new_cols (bool): If True, create new `<column>_usd` columns.
+                Otherwise overwrite the original columns. Defaults to True.
+            round_decimals (int | None): Optional number of decimal places to
+                round the converted values to. Defaults to None.
+            inplace (bool): If True, modifies the object directly and returns
+                None. Defaults to False.
+
+        Returns:
+            Self | None: The converted dataframe when `inplace=False`,
+            otherwise None.
+        """
         required_cols = [country_col, year_col]
         if not all(col in self.columns for col in required_cols):
             print(f"Warning: Missing required columns: {required_cols}. Skipping conversion.")
@@ -1118,6 +1215,28 @@ class JsonFile(pd.DataFrame):
         min_samples: int = 5,
         inplace: bool = False
     ) -> (Self | None):
+        """
+        Replace outlier values with missing values using hierarchical IQR rules.
+
+        Notes:
+            The method starts with the full grouping hierarchy and progressively
+            relaxes it by removing the last grouping column at each pass. Within
+            every valid group, values outside the 1.5 IQR bounds are converted
+            to `NaN`.
+
+        Args:
+            *target_cols: Numeric columns to evaluate for outliers.
+            hierarchy_cols (list): Ordered grouping columns used to define peer
+                groups.
+            min_samples (int): Minimum number of rows required for a group to be
+                considered valid. Defaults to 5.
+            inplace (bool): If True, modifies the object directly and returns
+                None. Defaults to False.
+
+        Returns:
+            Self | None: The cleaned dataframe when `inplace=False`, otherwise
+            None.
+        """
         
         if not hierarchy_cols:
             print("Warning: No hierarchy columns provided.")
@@ -1195,6 +1314,27 @@ class JsonFile(pd.DataFrame):
         min_samples: int = 5,
         inplace: bool = False
     ):
+        """
+        Remove rows that contain outlier values based on hierarchical IQR rules.
+
+        Notes:
+            This method shares the same grouping logic as `handle_outliers`, but
+            instead of replacing detected outliers with `NaN`, it drops the
+            affected rows after scanning all requested target columns.
+
+        Args:
+            *target_cols: Numeric columns to inspect for outliers.
+            hierarchy_cols (list): Ordered grouping columns used to define peer
+                groups.
+            min_samples (int): Minimum number of rows required for a group to be
+                considered valid. Defaults to 5.
+            inplace (bool): If True, modifies the object directly and returns
+                None. Defaults to False.
+
+        Returns:
+            Self | None: The filtered dataframe when `inplace=False`, otherwise
+            None.
+        """
         
         if not hierarchy_cols:
             print("Warning: No hierarchy columns provided.")
@@ -1274,6 +1414,39 @@ class JsonFile(pd.DataFrame):
         hierarchy_cols: list | str = None,
         inplace: bool = False
     ):
+        """
+        Impute missing values by progressively relaxing a grouping hierarchy.
+
+        Notes:
+            Supported strategies are `median`, `mean`, and `mode`. The method
+            attempts imputation using the full hierarchy first, then removes the
+            last grouping column one level at a time until no grouping columns
+            remain or the column is fully imputed.
+
+        Args:
+            *target_cols: Columns whose missing values should be filled.
+            strategy (str): Aggregation strategy to use. Supported values are
+                `median`, `mean`, `mode`, and `mod`. Defaults to `median`.
+            hierarchy_cols (list | str, optional): Grouping columns that define
+                the imputation hierarchy. A single string is treated as a
+                one-item list.
+            inplace (bool): If True, modifies the object directly and returns
+                None. Defaults to False.
+
+        Returns:
+            Self | None: The imputed dataframe when `inplace=False`, otherwise
+            None.
+
+        Example:
+        ```
+            df.fill_missing(
+                "salary_min",
+                "salary_max",
+                strategy="median",
+                hierarchy_cols=["country", "title", "company_name"]
+            )
+        ```
+        """
         result = self.copy() if not inplace else self
         
         valid_cols = [col for col in target_cols if col in result.columns]
@@ -1304,7 +1477,17 @@ class JsonFile(pd.DataFrame):
                     result[col] = result[col].fillna(fill_vals)
                 
                 else:
-                    counts = result.groupby(current_group + [col], dropna = False).size().reset_index(name = '_count')
+                    counts = (
+                        result[result[col].notna()]
+                        .groupby(current_group + [col], dropna = False)
+                        .size()
+                        .reset_index(name = '_count')
+                    )
+
+                    if counts.empty:
+                        current_group.pop()
+                        continue
+
                     counts = counts.sort_values(current_group + ['_count'], ascending = [True] * len(current_group) + [False])
                     
                     modes_df = counts.drop_duplicates(subset = current_group).rename(columns = {col: '_mode_val'})
@@ -1318,6 +1501,26 @@ class JsonFile(pd.DataFrame):
 
 
     def save_to_json(self, file_path: str, orient: str = 'records', force_ascii: bool = False, indent: int = 4) -> None:
+        """
+        Save the dataframe to a JSON file only when content has changed.
+
+        Notes:
+            Before writing, the method compares the current dataframe payload to
+            the existing file contents when possible. This avoids unnecessary
+            rewrites and keeps the output directory stable across unchanged runs.
+
+        Args:
+            file_path (str): Destination JSON file path.
+            orient (str): JSON orientation passed to `pandas.DataFrame.to_json`.
+                Defaults to `"records"`.
+            force_ascii (bool): Whether to escape non-ASCII characters in the
+                output. Defaults to False.
+            indent (int): Indentation width used when writing to disk. Defaults
+                to 4.
+
+        Returns:
+            None
+        """
         
         json_str = self.to_json(orient = orient, force_ascii = force_ascii)
         current_data = json.loads(json_str)
@@ -1345,7 +1548,26 @@ class JsonFile(pd.DataFrame):
 
 
 class SearchFile(JsonFile):
+    """
+    Specialized `JsonFile` wrapper for the Adzuna search dataset.
+
+    Notes:
+        When no explicit file path is provided, the class automatically loads
+        `Raw Data/search.json`.
+    """
+
     def __init__(self, data = None, *args, **kwargs) -> None:
+        """
+        Initialize a search dataframe from provided data or the default raw file.
+
+        Args:
+            data: Optional in-memory tabular data.
+            *args: Additional positional arguments forwarded to `JsonFile`.
+            **kwargs: Additional keyword arguments forwarded to `JsonFile`.
+
+        Returns:
+            None
+        """
         if data is None and 'json_file_path' not in kwargs:
             raw_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Raw Data")
             
@@ -1363,6 +1585,44 @@ class SearchFile(JsonFile):
         noisey_terms: set | None = None,
         **target_cols_and_json_keys
     ) -> (Self | None):
+        """
+        Extract entities from free text by matching against a cached lexicon with
+        spaCy tokenization and lemmatization.
+
+        Notes:
+            Terms are loaded from a JSON file or dictionary, grouped by target
+            output column, and matched across the combined source text. Results
+            are cached per unique text snippet so repeat runs avoid reprocessing
+            the same content.
+
+        Args:
+            *source_cols: Text columns whose combined content will be searched.
+            lexicon_source (str | dict): Path to a lexicon JSON file or a
+                preloaded dictionary with equivalent structure.
+            save_every (int): Cache checkpoint frequency during NLP processing.
+                Defaults to 1000.
+            inplace (bool): If True, modifies the object directly and returns
+                None. Defaults to False.
+            noisey_terms (set | None): Terms that should be ignored even if they
+                are matched. Defaults to None.
+            **target_cols_and_json_keys: Mapping where each key is an output
+                column name and each value is a lexicon key or list of keys to
+                collect terms from.
+
+        Returns:
+            Self | None: The dataframe with extracted entity-list columns when
+            `inplace=False`, otherwise None.
+
+        Example:
+        ```
+            search_dataframe.extract_entities_nlp(
+                "title",
+                "description",
+                lexicon_source="skills_lexicon.json",
+                basic_skills=["skills", "technologies"]
+            )
+        ```
+        """
         
         if noisey_terms is None:
             noisey_terms = set()
@@ -1554,7 +1814,23 @@ class SearchFile(JsonFile):
 
 
 class CategoriesFile(JsonFile):
+    """
+    Convenience wrapper for the categories raw dataset.
+    """
+
     def __init__(self, data = None, *args, **kwargs) -> None:
+        """
+        Initialize a categories dataframe from provided data or the default raw
+        categories file.
+
+        Args:
+            data: Optional in-memory tabular data.
+            *args: Additional positional arguments forwarded to `JsonFile`.
+            **kwargs: Additional keyword arguments forwarded to `JsonFile`.
+
+        Returns:
+            None
+        """
         if data is None and 'json_file_path' not in kwargs:
             raw_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Raw Data")
             
@@ -1564,7 +1840,23 @@ class CategoriesFile(JsonFile):
 
 
 class GeodataFile(JsonFile):
+    """
+    Convenience wrapper for the geodata raw dataset.
+    """
+
     def __init__(self, data = None, *args, **kwargs) -> None:
+        """
+        Initialize a geodata dataframe from provided data or the default raw
+        geodata file.
+
+        Args:
+            data: Optional in-memory tabular data.
+            *args: Additional positional arguments forwarded to `JsonFile`.
+            **kwargs: Additional keyword arguments forwarded to `JsonFile`.
+
+        Returns:
+            None
+        """
         if data is None and 'json_file_path' not in kwargs:
             raw_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Raw Data")
             
@@ -1574,7 +1866,23 @@ class GeodataFile(JsonFile):
 
 
 class HistoryFile(JsonFile):
+    """
+    Convenience wrapper for the history raw dataset.
+    """
+
     def __init__(self, data = None, *args, **kwargs) -> None:
+        """
+        Initialize a history dataframe from provided data or the default raw
+        history file.
+
+        Args:
+            data: Optional in-memory tabular data.
+            *args: Additional positional arguments forwarded to `JsonFile`.
+            **kwargs: Additional keyword arguments forwarded to `JsonFile`.
+
+        Returns:
+            None
+        """
         if data is None and 'json_file_path' not in kwargs:
             raw_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Raw Data")
             
@@ -1584,7 +1892,23 @@ class HistoryFile(JsonFile):
 
 
 class TopCompaniesFile(JsonFile):
+    """
+    Convenience wrapper for the top-companies raw dataset.
+    """
+
     def __init__(self, data = None, *args, **kwargs) -> None:
+        """
+        Initialize a top-companies dataframe from provided data or the default
+        raw top-companies file.
+
+        Args:
+            data: Optional in-memory tabular data.
+            *args: Additional positional arguments forwarded to `JsonFile`.
+            **kwargs: Additional keyword arguments forwarded to `JsonFile`.
+
+        Returns:
+            None
+        """
         if data is None and 'json_file_path' not in kwargs:
             raw_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Raw Data")
             

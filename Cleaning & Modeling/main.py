@@ -11,6 +11,26 @@ load_dotenv(dotenv_path = os.path.join(current_dir,'.env'))
 
 
 def get_data( fetcher: DataFetcher, total_target_jobs: int = 55555):
+    """
+    Fetch raw datasets from the configured API source and persist them to the
+    project's raw-data directory.
+
+    Args:
+        fetcher (DataFetcher): An initialized fetcher that knows how to call the
+            source API and save each endpoint locally.
+        total_target_jobs (int): Approximate number of search jobs to target when
+            collecting paginated search results. Defaults to 55555.
+
+    Returns:
+        DataFetcher: The same fetcher instance after the fetch operation
+        completes, which makes chaining or later inspection convenient.
+
+    Example:
+    ```
+        fetcher = DataFetcher()
+        fetcher = get_data(fetcher, total_target_jobs=25000)
+    ```
+    """
     # ---------- fetch data (Temporarily Disabled)
     fetcher = fetcher
     fetcher.fetch_and_save_data(total_target_jobs = total_target_jobs)
@@ -19,6 +39,29 @@ def get_data( fetcher: DataFetcher, total_target_jobs: int = 55555):
 
 
 def clean_data(dataframe: SearchFile):
+    """
+    Run the end-to-end cleaning and enrichment pipeline for the search dataset.
+
+    Notes:
+        The pipeline standardizes metadata, normalizes categorical fields,
+        translates non-English content, imputes missing values, enriches
+        coordinates, converts salaries to USD, handles salary outliers, and
+        reorders the final columns for downstream consumption.
+
+    Args:
+        dataframe (SearchFile): The raw or partially processed search dataset to
+            clean.
+
+    Returns:
+        SearchFile: A cleaned search dataset ready to be exported or used in
+        later analysis steps.
+
+    Example:
+    ```
+        search_dataframe = SearchFile()
+        cleaned = clean_data(search_dataframe)
+    ```
+    """
     # ---------- cleaning
     search_dataframe = dataframe
 
@@ -281,18 +324,16 @@ def clean_data(dataframe: SearchFile):
 
 # --- Main Execution
 
-fetcher = DataFetcher()
-# fetcher = get_data(fetcher = fetcher, total_target_jobs = 55555)
+if __name__ == "__main__":
+    fetcher = DataFetcher()
+    search_dataframe = SearchFile()
+    # fetcher = get_data(fetcher = fetcher, total_target_jobs = 55555)
 
+    search_dataframe = clean_data(dataframe = search_dataframe)
 
-
-
-search_dataframe = SearchFile()
-search_dataframe = clean_data(dataframe = search_dataframe)
-
-search_dataframe.save_to_json(
-    os.path.join(current_dir, 'Cleaned Data/search_data.json'),
-    orient = 'records',
-    force_ascii = False,
-    indent = 4
-)
+    search_dataframe.save_to_json(
+        os.path.join(current_dir, 'Cleaned Data/search_data.json'),
+        orient = 'records',
+        force_ascii = False,
+        indent = 4
+    )

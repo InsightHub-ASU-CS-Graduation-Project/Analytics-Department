@@ -5,7 +5,23 @@ from System import *
 load_dotenv(dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),'.env'))
 
 class DataFetcher:
+    """
+    Fetch raw datasets from the Adzuna API and maintain helper caches used by
+    the ingestion pipeline.
+
+    Notes:
+        The class centralizes API credentials, supported country markets,
+        endpoint routing, and automated reference-cache generation.
+    """
+
     def __init__(self):
+        """
+        Initialize API credentials, endpoint metadata, and automated caches.
+
+        Raises:
+            ValueError: If either `ADZUNA_API_ID` or `ADZUNA_APP_KEY` is missing
+            from the environment.
+        """
         api_id = os.getenv("ADZUNA_API_ID")
         api_key = os.getenv("ADZUNA_APP_KEY")
 
@@ -34,6 +50,24 @@ class DataFetcher:
 
     
     def __calculate_market_weights(self, endpoint_with_pages: str) -> dict:
+        """
+        Estimate each country's share of the global market for a paginated
+        endpoint.
+
+        Notes:
+            The method queries one lightweight page per country, reads the
+            endpoint's total `count`, and converts those counts into percentage
+            weights. The result is used to distribute page budgets across
+            countries when fetching search jobs.
+
+        Args:
+            endpoint_with_pages (str): A paginated endpoint name such as
+                `"search"`.
+
+        Returns:
+            dict: A dictionary mapping country code to percentage weight,
+            ordered from largest market to smallest.
+        """
         market_sizes = {}
         total_global_jobs = 0
         
@@ -42,22 +76,39 @@ class DataFetcher:
             
             params = self.params.copy()
             params.update({"results_per_page": 1})
-            
-            response = requests.get(url, params = params, timeout = 30)
-            
-            if response.status_code == 200:
-                data = response.json()
-                country_total_jobs = data.get("count", 0)
-                
-                market_sizes[country] = country_total_jobs
-                total_global_jobs += country_total_jobs
-                
-                
-                time.sleep(0.5) 
 
-            else:
-                print(f"Failed to get size for {country} (Error: {response.status_code})")
-                market_sizes[country] = 0
+            while True:
+                try:
+                    response = requests.get(url, params = params, timeout = 30)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        country_total_jobs = data.get("count", 0)
+                        
+                        market_sizes[country] = country_total_jobs
+                        total_global_jobs += country_total_jobs
+                        
+                        time.sleep(0.5)
+                        break
+
+                    elif response.status_code in [503, 504]:
+                        print(
+                            f"Server overloaded/Gateaway Timeout ({response.status_code}) for {country} in {endpoint_with_pages}.",
+                            "Sleeping for 10 seconds before retrying..."
+                        )
+
+                        time.sleep(10)
+                        continue
+
+                    else:
+                        print(f"Failed to get size for {country} (Error: {response.status_code})")
+                        market_sizes[country] = 0
+                        break
+
+                except requests.exceptions.RequestException as e:
+                    print(f"Network Error while scanning {country}: {e}. Retrying in 15s...")
+                    time.sleep(15)
+                    continue
                 
         country_weights = {}
         
@@ -103,6 +154,21 @@ class DataFetcher:
 
 
     def __fetch_data_without_pages(self, endpoint: str) -> list:
+        """
+        Fetch all data for endpoints that do not require pagination.
+
+        Notes:
+            The method iterates through every configured country, retries
+            transient server and network failures, and concatenates the endpoint
+            payloads into one list.
+
+        Args:
+            endpoint (str): Endpoint name such as `"categories"` or
+                `"geodata"`.
+
+        Returns:
+            list: Combined records collected from all configured countries.
+        """
         result = []
 
         for country in self.countries:
@@ -143,6 +209,25 @@ class DataFetcher:
 
 
     def __fetch_data_with_pages(self, endpoint: str, target_total_jobs: int) -> list:
+        """
+        Fetch paginated endpoint data while distributing the page budget across
+        markets.
+
+        Notes:
+            Page allocation is based on market weights calculated from total job
+            counts. Each country is then fetched page by page with retry logic
+            for transient failures.
+
+        Args:
+            endpoint (str): Paginated endpoint name, currently intended for
+                `"search"`.
+            target_total_jobs (int): Approximate global number of jobs to target
+                before converting that target into page counts.
+
+        Returns:
+            list: Combined paginated records collected from all configured
+            countries.
+        """
         result = []
 
         market_weights = self.__calculate_market_weights(endpoint)
@@ -211,6 +296,34 @@ class DataFetcher:
     
 
     def build_reference_lexicon(self, *source_cols, file_path: str, target_cache_key: str):
+        """
+        Extract normalized values from one or more file columns and sync them
+        into a cache-backed lexicon.
+
+        Notes:
+            Source values are lower-cased, stripped, deduplicated, and stored as
+            boolean lookup keys. Existing cached content is replaced only when
+            the source data changes.
+
+        Args:
+            *source_cols: Column names to read from the external file.
+            file_path (str): Path to a tabular file such as CSV or Excel.
+            target_cache_key (str): Top-level cache key under
+                `build_reference_lexicon_cache.json`.
+
+        Returns:
+            None
+
+        Example:
+        ```
+            fetcher.build_reference_lexicon(
+                "skill_name",
+                "normalized_skill",
+                file_path="skills.csv",
+                target_cache_key="skills"
+            )
+        ```
+        """
     
         print(f"Extracting data from '{file_path}' (Columns: {source_cols})...")
         
