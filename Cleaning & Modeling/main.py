@@ -337,3 +337,19 @@ if __name__ == "__main__":
         force_ascii = False,
         indent = 4
     )
+
+
+    search_dataframe['created'] = search_dataframe['created'].astype(str)
+    
+    search_dataframe.save_to_sql(
+        table_name = 'cleaned_search_data',
+        if_exists = 'replace',
+        index = False,
+        database_type = os.getenv('DB_TYPE'),
+        database_driver = os.getenv('DB_DRIVER'),
+        database_user = os.getenv('DB_USER'),
+        database_password = os.getenv('DB_PASSWORD'),
+        database_host = os.getenv('DB_HOST'),
+        database_port = os.getenv('DB_PORT'),
+        database_name = os.getenv('DB_NAME'),
+    )
