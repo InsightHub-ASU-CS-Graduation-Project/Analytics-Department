@@ -17,3 +17,4 @@ from deep_translator import GoogleTranslator
 from langdetect import detect, DetectorFactory
 from geopy.extra.rate_limiter import RateLimiter
 from babel.numbers import get_territory_currencies
+from sqlalchemy.types import NVARCHAR, Float, Integer, DateTime
