@@ -1508,6 +1508,8 @@ class JsonFile(pd.DataFrame):
             Before writing, the method compares the current dataframe payload to
             the existing file contents when possible. This avoids unnecessary
             rewrites and keeps the output directory stable across unchanged runs.
+            Datetime columns are serialized as `%Y-%m-%d %H:%M:%S` strings to
+            keep the JSON output human-readable and stable across environments.
 
         Args:
             file_path (str): Destination JSON file path.
@@ -1521,8 +1523,12 @@ class JsonFile(pd.DataFrame):
         Returns:
             None
         """
-        
-        json_str = self.to_json(orient = orient, force_ascii = force_ascii)
+        export_df = self.copy()
+
+        for col in export_df.select_dtypes(include=['datetime', 'datetimetz']).columns:
+                export_df[col] = export_df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        json_str = export_df.to_json(orient = orient, force_ascii = force_ascii)
         current_data = json.loads(json_str)
 
         if os.path.exists(file_path):
@@ -1540,7 +1546,7 @@ class JsonFile(pd.DataFrame):
 
         os.makedirs(os.path.dirname(file_path), exist_ok = True)
         
-        self.to_json(file_path, orient = orient, force_ascii = force_ascii, indent = indent)
+        export_df.to_json(file_path, orient = orient, force_ascii = force_ascii, indent = indent)
         
         print(" Save completed successfully!")
 
@@ -1557,6 +1563,9 @@ class JsonFile(pd.DataFrame):
             database_port: str,
             database_name: str,
             database_driver: str | None = None,
+            columns_types: dict | None = None,
+            chunk_size: int | None = None,
+            fast_executemany: bool = False,
             if_exists: str = 'append',
             index: bool = False
     ) -> None:
@@ -1581,6 +1590,12 @@ class JsonFile(pd.DataFrame):
             database_name (str): Database/schema name, or SQLite file path.
             database_driver (str | None): ODBC driver name for SQL Server
                 dialects. Defaults to None.
+            columns_types (dict | None): Optional SQLAlchemy dtype mapping to
+                control target SQL column types. Defaults to None.
+            chunk_size (int | None): Optional number of rows per write chunk.
+                Defaults to None (single batch).
+            fast_executemany (bool): Enables `fast_executemany` for SQL Server
+                pyodbc connections when supported. Defaults to False.
             if_exists (str): How to behave if the table already exists. 
                 Options: 'fail', 'replace', 'append'. Defaults to 'append'.
             index (bool): Whether to write the DataFrame index as a SQL column.
@@ -1613,6 +1628,7 @@ class JsonFile(pd.DataFrame):
         db_name = str(database_name or '').strip()
         db_driver = str(database_driver or '').strip() or None
         table_name = str(table_name or '').strip()
+        engine_kwargs = {}
 
         if not table_name:
             print("Error: Missing table_name.")
@@ -1657,8 +1673,10 @@ class JsonFile(pd.DataFrame):
             encoded_pass = urllib.parse.quote_plus(db_pass)
 
             engine_url = f"{db_type}://{encoded_user}:{encoded_pass}@{db_host}:{db_port}/{db_name}?driver={encoded_driver}"
+            engine_kwargs['fast_executemany'] = fast_executemany
 
         else:
+
             if not all([db_user, db_pass, db_host, db_port, db_name]):
                 print("Error: Missing database credentials in environment variables.")
                 
@@ -1668,14 +1686,27 @@ class JsonFile(pd.DataFrame):
             encoded_pass = urllib.parse.quote_plus(db_pass)
            
             engine_url = f"{db_type}://{encoded_user}:{encoded_pass}@{db_host}:{db_port}/{db_name}"
-        
-        
+                
         try:
-            engine = create_engine(engine_url)
+            export_df = self.copy()
+
+            # Normalize timezone-aware datetimes for SQL drivers that do not accept timezone-aware pandas dtypes.
+            for col in export_df.select_dtypes(include=['datetimetz']).columns:
+                export_df[col] = export_df[col].dt.tz_localize(None)
+
+            engine = create_engine(engine_url, **engine_kwargs)
             
+
             print(f"Pushing data to SQL table '{table_name}' at {db_host}...")
             
-            self.to_sql(table_name, con = engine, if_exists = if_exists, index = index)
+            export_df.to_sql(
+                table_name,
+                con = engine,
+                if_exists = if_exists,
+                index = index,
+                dtype = columns_types,
+                chunksize = chunk_size if chunk_size else None
+            )
             
             print("Database save completed successfully!")
             

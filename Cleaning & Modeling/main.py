@@ -327,10 +327,11 @@ def clean_data(dataframe: SearchFile):
 if __name__ == "__main__":
     fetcher = DataFetcher()
     search_dataframe = SearchFile()
+    
     # fetcher = get_data(fetcher = fetcher, total_target_jobs = 55555)
 
     search_dataframe = clean_data(dataframe = search_dataframe)
-
+    
     search_dataframe.save_to_json(
         os.path.join(current_dir, 'Cleaned Data/search_data.json'),
         orient = 'records',
@@ -338,8 +339,24 @@ if __name__ == "__main__":
         indent = 4
     )
 
-
-    search_dataframe['created'] = search_dataframe['created'].astype(str)
+    sql_data_types = {
+        'id': NVARCHAR(255),
+        'title': NVARCHAR(500),
+        'category_label': NVARCHAR(255),
+        'category_tag': NVARCHAR(255),
+        'seniority_level': NVARCHAR(100),
+        'company_name': NVARCHAR(500),
+        'created': DateTime(),             
+        'created_year': Integer(),
+        'contract_type': NVARCHAR(100),
+        'contract_time': NVARCHAR(100),
+        'salary_min': Float(),
+        'salary_max': Float(),
+        'latitude': Float(),
+        'longitude': Float(),
+        'state_or_gov': NVARCHAR(255),
+        'country': NVARCHAR(255), 
+    }
     
     search_dataframe.save_to_sql(
         table_name = 'cleaned_search_data',
@@ -352,4 +369,5 @@ if __name__ == "__main__":
         database_host = os.getenv('DB_HOST'),
         database_port = os.getenv('DB_PORT'),
         database_name = os.getenv('DB_NAME'),
+        columns_types = sql_data_types
     )
