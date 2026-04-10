@@ -1546,6 +1546,144 @@ class JsonFile(pd.DataFrame):
 
         return None
 
+    
+    def save_to_sql(
+            self,
+            table_name: str,
+            database_type: str,
+            database_user: str,
+            database_password: str,
+            database_host: str,
+            database_port: str,
+            database_name: str,
+            database_driver: str | None = None,
+            if_exists: str = 'append',
+            index: bool = False
+    ) -> None:
+        """
+        Save the dataframe to a SQL database table using SQLAlchemy.
+
+        Notes:
+            The method supports standard SQLAlchemy URL styles and includes
+            dedicated handling for SQL Server drivers and SQLite paths. For
+            SQL Server, `database_driver` is required and is URL-encoded.
+            For SQLite, only `database_name` is required.
+
+        Args:
+            table_name (str): The name of the SQL table to write to.
+            database_type (str): SQLAlchemy dialect/driver, for example
+                `"postgresql+psycopg2"`, `"mysql+pymysql"`, `"mssql+pyodbc"`,
+                or `"sqlite"`.
+            database_user (str): Database username.
+            database_password (str): Database password.
+            database_host (str): Database host address.
+            database_port (str): Database port.
+            database_name (str): Database/schema name, or SQLite file path.
+            database_driver (str | None): ODBC driver name for SQL Server
+                dialects. Defaults to None.
+            if_exists (str): How to behave if the table already exists. 
+                Options: 'fail', 'replace', 'append'. Defaults to 'append'.
+            index (bool): Whether to write the DataFrame index as a SQL column.
+                Defaults to False.
+
+        Returns:
+            None
+
+        Example:
+        ```
+            df.save_to_sql(
+                table_name="cleaned_search_data",
+                database_type="postgresql+psycopg2",
+                database_user="postgres",
+                database_password="secret",
+                database_host="localhost",
+                database_port="5432",
+                database_name="analytics_db",
+                if_exists="replace",
+                index=False
+            )
+        ```
+        """
+
+        db_type = str(database_type or '').strip().lower()
+        db_user = str(database_user or '').strip()
+        db_pass = str(database_password or '').strip()
+        db_host = str(database_host or '').strip()
+        db_port = str(database_port or '').strip()
+        db_name = str(database_name or '').strip()
+        db_driver = str(database_driver or '').strip() or None
+        table_name = str(table_name or '').strip()
+
+        if not table_name:
+            print("Error: Missing table_name.")
+            
+            return None
+
+        if if_exists not in ['fail', 'replace', 'append']:
+            print(f"Error: Invalid if_exists value '{if_exists}'. Use 'fail', 'replace', or 'append'.")
+           
+            return None
+
+        if not db_type:
+            print("Error: Missing database_type.")
+            
+            return None
+
+        if db_type.startswith('sqlite'):
+            if not db_name:
+                print("Error: Missing database_name for SQLite.")
+               
+                return None
+
+            if db_name == ':memory:':
+                engine_url = "sqlite:///:memory:"
+           
+            else:
+                engine_url = f"sqlite:///{db_name}"
+
+        elif 'mssql' in db_type or 'sqlserver' in db_type:
+            if not all([db_user, db_pass, db_host, db_port, db_name]):
+                print("Error: Missing SQL Server credentials in environment variables.")
+               
+                return None
+
+            if not db_driver:
+                print("Error: Missing database_driver for SQL Server connection.")
+               
+                return None
+
+            encoded_driver = urllib.parse.quote_plus(db_driver)
+            encoded_user = urllib.parse.quote_plus(db_user)
+            encoded_pass = urllib.parse.quote_plus(db_pass)
+
+            engine_url = f"{db_type}://{encoded_user}:{encoded_pass}@{db_host}:{db_port}/{db_name}?driver={encoded_driver}"
+
+        else:
+            if not all([db_user, db_pass, db_host, db_port, db_name]):
+                print("Error: Missing database credentials in environment variables.")
+                
+                return None
+
+            encoded_user = urllib.parse.quote_plus(db_user)
+            encoded_pass = urllib.parse.quote_plus(db_pass)
+           
+            engine_url = f"{db_type}://{encoded_user}:{encoded_pass}@{db_host}:{db_port}/{db_name}"
+        
+        
+        try:
+            engine = create_engine(engine_url)
+            
+            print(f"Pushing data to SQL table '{table_name}' at {db_host}...")
+            
+            self.to_sql(table_name, con = engine, if_exists = if_exists, index = index)
+            
+            print("Database save completed successfully!")
+            
+        except Exception as e:
+            print(f"FATAL ERROR: Could not push to database. Reason: {e}")
+
+        return None
+
 
 class SearchFile(JsonFile):
     """
