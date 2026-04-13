@@ -2,7 +2,16 @@
 *.env
 
 # ------------------ Raw Data
-Cleaning & Modeling/Raw Data/*.json
+Cleaning & Modeling/Raw Data/
 
 # ------------------ Cache
-Cleaning & Modeling/__pycache__/*.pyc
+Cleaning & Modeling/__pycache__/
+Analytics & Visualization/__pycache__/
+
+Cleaning & Modeling/Cache Data/
+
+# ------------------ Settings
+.vscode/
+
+# ------------------ Our Data
+Shared Data/
