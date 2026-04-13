@@ -1,12 +1,25 @@
-from fetching import *
-from cleaning import *
-from Libraries import *
+import os
+import json
+import numpy as np
+import pandas as pd
+from dotenv import load_dotenv
+from sqlalchemy.types import NVARCHAR, Float, Integer, DateTime
+
+from Fetching import DataFetcher
+from Cleaning import SearchFile
 
 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
-load_dotenv(dotenv_path = os.path.join(current_dir,'.env'))
+load_dotenv(
+    dotenv_path = os.path.join(
+        os.path.dirname(
+            current_dir
+        ),
+        '.env'
+    )
+)
 
 
 
@@ -291,6 +304,16 @@ def clean_data(dataframe: SearchFile):
         inplace = True
     )
 
+    search_dataframe.loc[
+        search_dataframe['salary_min'] > search_dataframe['salary_max'],
+        'salary_max'    
+    ] = search_dataframe.loc[
+        search_dataframe['salary_min'] > search_dataframe['salary_max'],
+        'salary_min'
+    ]
+
+    search_dataframe['salary_avg'] = (search_dataframe['salary_min'] + search_dataframe['salary_max']) / 2
+
 
     # --- Drop the final unnecessary columns
     search_dataframe.drop(columns = ['description'], inplace = True)
@@ -310,6 +333,7 @@ def clean_data(dataframe: SearchFile):
         'contract_time',
         'salary_min',
         'salary_max',
+        'salary_avg',
         'latitude',
         'longitude',
         'state_or_gov',
@@ -331,9 +355,10 @@ if __name__ == "__main__":
     # fetcher = get_data(fetcher = fetcher, total_target_jobs = 55555)
 
     search_dataframe = clean_data(dataframe = search_dataframe)
+
     
     search_dataframe.save_to_json(
-        os.path.join(current_dir, 'Cleaned Data/search_data.json'),
+        os.path.join(os.path.dirname(current_dir), 'Shared Data/search_data.json'),
         orient = 'records',
         force_ascii = False,
         indent = 4
@@ -352,11 +377,13 @@ if __name__ == "__main__":
         'contract_time': NVARCHAR(100),
         'salary_min': Float(),
         'salary_max': Float(),
+        'salary_avg': Float(),
         'latitude': Float(),
         'longitude': Float(),
         'state_or_gov': NVARCHAR(255),
         'country': NVARCHAR(255), 
     }
+    
     
     search_dataframe.save_to_sql(
         table_name = 'cleaned_search_data',
@@ -369,5 +396,7 @@ if __name__ == "__main__":
         database_host = os.getenv('DB_HOST'),
         database_port = os.getenv('DB_PORT'),
         database_name = os.getenv('DB_NAME'),
-        columns_types = sql_data_types
+        columns_types = sql_data_types,
+        fast_executemany = True,
+        chunk_size = 1000
     )

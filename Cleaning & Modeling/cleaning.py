@@ -1,5 +1,22 @@
-from Libraries import *
-from System import CacheManager
+import os
+import time
+import json
+import spacy
+import urllib
+import pycountry
+import numpy as np
+import pandas as pd
+import yfinance as yf
+from typing import Self
+from spacy.matcher import Matcher
+from sqlalchemy import create_engine
+from geopy.geocoders import Nominatim
+from deep_translator import GoogleTranslator
+from langdetect import detect, DetectorFactory
+from geopy.extra.rate_limiter import RateLimiter
+from babel.numbers import get_territory_currencies
+
+from Caching import CacheManager
 
 
 
@@ -1659,7 +1676,7 @@ class JsonFile(pd.DataFrame):
 
         elif 'mssql' in db_type or 'sqlserver' in db_type:
             if not all([db_user, db_pass, db_host, db_port, db_name]):
-                print("Error: Missing SQL Server credentials in environment variables.")
+                print("Error: Missing SQL Server credentials")
                
                 return None
 
@@ -1678,7 +1695,7 @@ class JsonFile(pd.DataFrame):
         else:
 
             if not all([db_user, db_pass, db_host, db_port, db_name]):
-                print("Error: Missing database credentials in environment variables.")
+                print("Error: Missing database credentials")
                 
                 return None
 
@@ -1691,7 +1708,7 @@ class JsonFile(pd.DataFrame):
             export_df = self.copy()
 
             # Normalize timezone-aware datetimes for SQL drivers that do not accept timezone-aware pandas dtypes.
-            for col in export_df.select_dtypes(include=['datetimetz']).columns:
+            for col in export_df.select_dtypes(include = ['datetimetz']).columns:
                 export_df[col] = export_df[col].dt.tz_localize(None)
 
             engine = create_engine(engine_url, **engine_kwargs)
@@ -1980,107 +1997,3 @@ class SearchFile(JsonFile):
             result[col] = [caches[col].get(text, []) for text in combined_text]
             
         return None if inplace else result
-
-
-class CategoriesFile(JsonFile):
-    """
-    Convenience wrapper for the categories raw dataset.
-    """
-
-    def __init__(self, data = None, *args, **kwargs) -> None:
-        """
-        Initialize a categories dataframe from provided data or the default raw
-        categories file.
-
-        Args:
-            data: Optional in-memory tabular data.
-            *args: Additional positional arguments forwarded to `JsonFile`.
-            **kwargs: Additional keyword arguments forwarded to `JsonFile`.
-
-        Returns:
-            None
-        """
-        if data is None and 'json_file_path' not in kwargs:
-            raw_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Raw Data")
-            
-            kwargs['json_file_path'] = os.path.join(raw_data_dir, f"categories.json")
-
-        super().__init__(data = data, *args, **kwargs)
-
-
-class GeodataFile(JsonFile):
-    """
-    Convenience wrapper for the geodata raw dataset.
-    """
-
-    def __init__(self, data = None, *args, **kwargs) -> None:
-        """
-        Initialize a geodata dataframe from provided data or the default raw
-        geodata file.
-
-        Args:
-            data: Optional in-memory tabular data.
-            *args: Additional positional arguments forwarded to `JsonFile`.
-            **kwargs: Additional keyword arguments forwarded to `JsonFile`.
-
-        Returns:
-            None
-        """
-        if data is None and 'json_file_path' not in kwargs:
-            raw_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Raw Data")
-            
-            kwargs['json_file_path'] = os.path.join(raw_data_dir, f"geodata.json")
-
-        super().__init__(data = data, *args, **kwargs)
-
-
-class HistoryFile(JsonFile):
-    """
-    Convenience wrapper for the history raw dataset.
-    """
-
-    def __init__(self, data = None, *args, **kwargs) -> None:
-        """
-        Initialize a history dataframe from provided data or the default raw
-        history file.
-
-        Args:
-            data: Optional in-memory tabular data.
-            *args: Additional positional arguments forwarded to `JsonFile`.
-            **kwargs: Additional keyword arguments forwarded to `JsonFile`.
-
-        Returns:
-            None
-        """
-        if data is None and 'json_file_path' not in kwargs:
-            raw_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Raw Data")
-            
-            kwargs['json_file_path'] = os.path.join(raw_data_dir, f"history.json")
-
-        super().__init__(data = data, *args, **kwargs)
-
-
-class TopCompaniesFile(JsonFile):
-    """
-    Convenience wrapper for the top-companies raw dataset.
-    """
-
-    def __init__(self, data = None, *args, **kwargs) -> None:
-        """
-        Initialize a top-companies dataframe from provided data or the default
-        raw top-companies file.
-
-        Args:
-            data: Optional in-memory tabular data.
-            *args: Additional positional arguments forwarded to `JsonFile`.
-            **kwargs: Additional keyword arguments forwarded to `JsonFile`.
-
-        Returns:
-            None
-        """
-        if data is None and 'json_file_path' not in kwargs:
-            raw_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Raw Data")
-            
-            kwargs['json_file_path'] = os.path.join(raw_data_dir, f"top_companies.json")
-
-        super().__init__(data = data, *args, **kwargs)
