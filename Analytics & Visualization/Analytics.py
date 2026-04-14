@@ -1,14 +1,74 @@
 import numpy as np
 import pandas as pd
-
+from typing import Any
 
 
 class Analyzer ():
+    """
+    Provide reusable analytics helpers for dashboard and API responses.
+
+    Notes:
+        Methods in this class support a common workflow:
+        1. Apply filters.
+        2. Compute optional rule-based transformations.
+        3. Return serializable data structures for frontend consumption.
+    """
+
     def __init__(self, dataframe: pd.DataFrame):
+        """
+        Initialize the analyzer with a defensive copy of source data.
+
+        Args:
+            dataframe (pd.DataFrame): Input dataset used by analytics methods.
+
+        Returns:
+            None
+        """
         self.dataframe = dataframe.copy()
 
 
-    def _apply_filters(self, dataframe: pd.DataFrame, filters: dict = None) -> pd.DataFrame:
+    def _is_safe_expression(self, expression: Any) -> bool:
+        """
+        Perform a lightweight safety check for dynamic eval expressions.
+
+        Notes:
+            This is a guardrail, not a full sandbox. It blocks clearly risky
+            tokens and non-string payloads before passing expressions to
+            `DataFrame.eval`.
+
+        Args:
+            expression (Any): Candidate expression text.
+
+        Returns:
+            bool: True if the expression passes basic safety checks, otherwise
+            False.
+        """
+        if not isinstance(expression, str):
+            return False
+
+        blocked_tokens = ["__", "@", "import", "lambda", ";"]
+        lowered = expression.lower()
+
+        return not any(token in lowered for token in blocked_tokens)
+
+
+    def _apply_filters(self, dataframe: pd.DataFrame, filters: dict[str, Any] | None = None) -> pd.DataFrame:
+        """
+        Filter a dataframe using exact-match and `isin` predicates.
+
+        Notes:
+            - Scalar values apply equality filtering.
+            - List values apply membership filtering via `isin`.
+            - Unknown columns are ignored safely.
+
+        Args:
+            dataframe (pd.DataFrame): Dataframe to filter.
+            filters (dict[str, Any] | None): Mapping from column name to filter
+                value/list. Defaults to None.
+
+        Returns:
+            pd.DataFrame: Filtered dataframe.
+        """
         if not filters:
             return dataframe
             
@@ -25,27 +85,75 @@ class Analyzer ():
         return filtered_dataframe
 
 
-    def _apply_computed_rules(self, dataframe: pd.DataFrame, rules: list) -> pd.DataFrame:
+    def _apply_computed_rules(self, dataframe: pd.DataFrame, rules: list[dict[str, Any]] | None) -> pd.DataFrame:
+        """
+        Apply dynamic post-processing rules to a dataframe.
+
+        Notes:
+            Supported rule styles:
+            - Conditional set: `{"where": "...", "set_col": "...", "set_value": ...}`
+            - Expression column: `{"new_col": "...", "expression": "..."}`
+            - Series method: `{"source_col": "...", "method": "...", "new_col": "..."}`
+            Invalid rules are skipped safely.
+
+        Args:
+            dataframe (pd.DataFrame): Dataframe to transform.
+            rules (list[dict[str, Any]] | None): Rule definitions to apply.
+
+        Returns:
+            pd.DataFrame: Transformed dataframe.
+        """
         if not rules:
             return dataframe
             
         result_dataframe = dataframe.copy()
         
         for rule in rules:
-            
-            if "where" in rule:
-                mask = result_dataframe.eval(rule["where"])
-                result_dataframe.loc[mask, rule["set_col"]] = rule["set_value"]
+            if not isinstance(rule, dict):
+                continue
 
-            elif "expression" in rule:
-                expr = f"{rule['new_col']} = {rule['expression']}"
-                result_dataframe.eval(expr, inplace = True)
+            try:
+                if "where" in rule:
+                    required = {"where", "set_col", "set_value"}
+                    if not required.issubset(rule.keys()):
+                        continue
 
-            elif "method" in rule:
-                src = rule["source_col"]
-                method_name = rule["method"]
-                
-                result_dataframe[rule["new_col"]] = getattr(result_dataframe[src], method_name)()
+                    if not self._is_safe_expression(rule["where"]):
+                        continue
+
+                    mask = result_dataframe.eval(rule["where"])
+                    result_dataframe.loc[mask, rule["set_col"]] = rule["set_value"]
+
+                elif "expression" in rule:
+                    required = {"new_col", "expression"}
+                    if not required.issubset(rule.keys()):
+                        continue
+
+                    if not self._is_safe_expression(rule["expression"]):
+                        continue
+
+                    expr = f"{rule['new_col']} = {rule['expression']}"
+                    result_dataframe.eval(expr, inplace = True)
+
+                elif "method" in rule:
+                    required = {"source_col", "method", "new_col"}
+                    if not required.issubset(rule.keys()):
+                        continue
+
+                    src = rule["source_col"]
+                    method_name = rule["method"]
+
+                    if src not in result_dataframe.columns:
+                        continue
+
+                    method = getattr(result_dataframe[src], method_name, None)
+                    if method is None:
+                        continue
+
+                    result_dataframe[rule["new_col"]] = method()
+
+            except Exception:
+                continue
                 
         return result_dataframe
 
@@ -59,6 +167,29 @@ class Analyzer ():
             orient: str = 'records',
             **kwargs
         ) -> list:
+        """
+        Return distribution counts for a categorical column.
+
+        Args:
+            x_col (str): Categorical column to aggregate.
+            top_n (int | None): Optional limit for top categories.
+            filters (dict | None): Optional pre-aggregation filters.
+            rules (list | None): Optional computed rules applied to the result.
+            orient (str): Output orientation for `DataFrame.to_dict`.
+            **kwargs: Extra static fields appended to each output row.
+
+        Returns:
+            list: Serialized distribution rows in the requested orientation.
+
+        Example:
+        ```
+            analyzer.get_categorical_distribution(
+                x_col="country",
+                top_n=10,
+                filters={"contract_type": "Permanent"}
+            )
+        ```
+        """
         data = self._apply_filters(self.dataframe, filters)
         
         if data.empty or x_col not in data.columns: return []
@@ -89,14 +220,38 @@ class Analyzer ():
             orient: str = 'records',
             **kwargs
         ) -> list:
+        """
+        Aggregate a numeric column by category.
+
+        Args:
+            x_col (str): Grouping column.
+            y_col (str): Numeric column to aggregate.
+            agg_func (str): Aggregation function name (for example: `mean`,
+                `sum`, `median`, `max`).
+            top_n (int | None): Optional cap for highest `y` rows.
+            filters (dict | None): Optional filters applied before aggregation.
+            rules (list | None): Optional computed rules on output rows.
+            orient (str): Output orientation for `DataFrame.to_dict`.
+            **kwargs: Extra static fields appended to each output row.
+
+        Returns:
+            list: Serialized aggregation rows.
+        """
         data = self._apply_filters(self.dataframe, filters)
         if data.empty or x_col not in data.columns or y_col not in data.columns: return []
 
         valid_data = data.dropna(subset=[y_col])
-        
-        grouped = valid_data.groupby(x_col)[y_col].agg(agg_func).round(0).reset_index()
+
+        try:
+            grouped = valid_data.groupby(x_col)[y_col].agg(agg_func).reset_index()
+        except Exception:
+            return []
+
+        if pd.api.types.is_numeric_dtype(grouped[y_col]):
+            grouped[y_col] = grouped[y_col].round(0)
+
         grouped.columns = ['x', 'y']
-        grouped = grouped.sort_values(by = 'y', ascending=False)
+        grouped = grouped.sort_values(by = 'y', ascending = False)
         
         if top_n:
             grouped = grouped.head(top_n)
@@ -112,6 +267,7 @@ class Analyzer ():
 
     def get_time_series(
             self,
+            date_col: str,
             time_period: str = 'M',
             num_col: str = None,
             agg_func: str = 'count',
@@ -120,29 +276,66 @@ class Analyzer ():
             orient: str = 'records',
             **kwargs
         ) -> list:
-        data = self._apply_filters(self.dataframe, filters)
-        if data.empty or 'created' not in data.columns: return []
+        """
+        Build a time-series aggregation from a date/datetime column.
 
-        data = data.dropna(subset=['created']).copy()
+        Notes:
+            Accepted `time_period` values:
+            - `M`: Monthly buckets (`YYYY-MM`)
+            - `Y`: Yearly buckets (`YYYY`)
+            - Any other value: Daily buckets (`YYYY-MM-DD`)
+
+        Args:
+            date_col (str): Source datetime/date column used for time bucketing.
+            time_period (str): Time bucket granularity.
+            num_col (str | None): Optional numeric column for non-count
+                aggregation.
+            agg_func (str): Aggregation function for `num_col`.
+            filters (dict | None): Optional filters applied before aggregation.
+            rules (list | None): Optional computed rules on output rows.
+            orient (str): Output orientation for `DataFrame.to_dict`.
+            **kwargs: Extra static fields appended to each output row.
+
+        Returns:
+            list: Serialized time-series rows.
+        """
+        data = self._apply_filters(self.dataframe, filters)
+        if data.empty or date_col not in data.columns: return []
+
+        data = data.dropna(subset = [date_col]).copy()
+        data[date_col] = pd.to_datetime(data[date_col], errors = 'coerce')
+        data = data.dropna(subset = [date_col])
+
+        if data.empty:
+            return []
         
         if time_period.upper() == 'M':
-            data['time_x'] = data['created'].dt.strftime('%Y-%m')
+            data['time_x'] = data[date_col].dt.strftime('%Y-%m')
         
         elif time_period.upper() == 'Y':
-            data['time_x'] = data['created'].dt.strftime('%Y')
+            data['time_x'] = data[date_col].dt.strftime('%Y')
         
         else:
-            data['time_x'] = data['created'].dt.strftime('%Y-%m-%d')
+            data['time_x'] = data[date_col].dt.strftime('%Y-%m-%d')
 
 
         if num_col and agg_func != 'count':
-            grouped = data.groupby('time_x')[num_col].agg(agg_func).round(0).reset_index()
+            if num_col not in data.columns:
+                return []
+
+            try:
+                grouped = data.groupby('time_x')[num_col].agg(agg_func).reset_index()
+            except Exception:
+                return []
+
+            if pd.api.types.is_numeric_dtype(grouped[num_col]):
+                grouped[num_col] = grouped[num_col].round(0)
         
         else:
             grouped = data.groupby('time_x').size().reset_index(name = 'y')
 
         grouped.columns = ['x', 'y']
-        grouped = grouped.sort_values(by='x', ascending=True)
+        grouped = grouped.sort_values(by = 'x', ascending = True)
        
         grouped = self._apply_computed_rules(grouped, rules)
 
@@ -153,16 +346,43 @@ class Analyzer ():
         return grouped.to_dict(orient = orient)
 
 
-    def get_kpi_value(self, column: str, agg_func: str = 'count', filters: dict | None = None, **kwargs) -> dict:
+    def get_kpi_value(self, column: str, agg_func: str = 'count', round_value: int = 2, filters: dict | None = None, **kwargs) -> dict:
+        """
+        Compute a single KPI metric.
+
+        Args:
+            column (str): Source column used when `agg_func` is not `count`.
+            agg_func (str): Aggregation function name; `count` uses row count.
+            round_value (int): Decimal places used when the KPI result is a
+                floating-point value. Defaults to 2.
+            filters (dict | None): Optional filters applied before KPI
+                computation.
+            **kwargs: Optional metadata fields for the response card. `label`
+                customizes KPI label.
+
+        Returns:
+            dict: KPI card with `value`, `label`, and optional extra fields.
+        """
         data = self._apply_filters(self.dataframe, filters)
         
         if agg_func == 'count':
             value = len(data)
         else:
-            value = data[column].agg(agg_func)
+            if column not in data.columns:
+                value = None
+            else:
+                try:
+                    value = data[column].agg(agg_func)
+                except Exception:
+                    value = None
+
+        if pd.isna(value):
+            value = None
+        elif isinstance(value, np.generic):
+            value = value.item()
             
         kpi_card = {
-            "value": round(value, 2) if isinstance(value, float) else value,
+            "value": round(value, round_value) if isinstance(value, float) else value,
             "label": kwargs.get("label", column)
         }
 
@@ -175,13 +395,34 @@ class Analyzer ():
 
     
     def get_bins(self, col: str, bins: int = 10, filters: dict = None, rules: list = None, orient: str = 'records', **kwargs) -> list:
+        """
+        Create histogram bins for a numeric column.
+
+        Args:
+            col (str): Numeric source column.
+            bins (int): Number of histogram bins. Defaults to 10.
+            filters (dict | None): Optional filters applied before binning.
+            rules (list | None): Optional computed rules on output rows.
+            orient (str): Output orientation for `DataFrame.to_dict`.
+            **kwargs: Extra static fields appended to each output row.
+
+        Returns:
+            list: Serialized histogram bins as `x` (label) and `y` (count).
+        """
         data = self._apply_filters(self.dataframe, filters)
         
         if data.empty or col not in data.columns: return []
-        
-        counts, bin_edges = np.histogram(data[col].dropna(), bins = bins)
-        
-        bin_labels = [f"{int(bin_edges[i])}-{int(bin_edges[i + 1])}" for i in range(len(bin_edges) - 1)]
+
+        if not isinstance(bins, int) or bins <= 0:
+            return []
+
+        numeric_values = pd.to_numeric(data[col], errors = 'coerce').dropna()
+        if numeric_values.empty:
+            return []
+
+        counts, bin_edges = np.histogram(numeric_values, bins = bins)
+
+        bin_labels = [f"{bin_edges[i]:.2f}-{bin_edges[i + 1]:.2f}" for i in range(len(bin_edges) - 1)]
         grouped = pd.DataFrame({'x': bin_labels, 'y': counts})
         
         grouped = self._apply_computed_rules(grouped, rules)
