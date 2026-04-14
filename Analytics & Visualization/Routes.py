@@ -1,9 +1,13 @@
+import logging
 from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from Services import PageBuilder
 
+
+
+logger = logging.getLogger(__name__)
 
 
 class PageRequest(BaseModel):
@@ -43,6 +47,7 @@ class DynamicPageRouter:
         """
         self.router = APIRouter()
         self.builder = builder
+        self.path = path
 
         route_methods = methods or ["POST"]
 
@@ -70,6 +75,21 @@ class DynamicPageRouter:
         """
         actual_request = request or PageRequest()
 
-        data = self.builder.build(actual_request)
+        try:
+            data = self.builder.build(actual_request)
+           
+            return {"status": "success", "data": data}
         
-        return {"status": "success", "data": data}
+        except Exception as e:
+            request_payload = actual_request.model_dump() if isinstance(actual_request, BaseModel) else actual_request
+           
+            logger.error(f"Failed to build page payload | Path: {self.path} | Payload: {request_payload} | Error: {str(e)}")
+           
+            return {
+                "status": "error",
+                "data": {},
+                "error": "An internal error occurred while building the page. Please contact support.",
+                "details": {
+                    "path": self.path
+                }
+            }
