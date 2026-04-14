@@ -1,4 +1,9 @@
+import logging
 from typing import Any, Callable
+
+
+
+logger = logging.getLogger(__name__)
 
 
 class PageBuilder:
@@ -48,11 +53,15 @@ class PageBuilder:
         for key, func in self.page_config.items():
             if not callable(func):
                 result[key] = {"error": "Configured value is not callable."}
+               
                 continue
 
             try:
                 result[key] = func(request_data)
+            
             except Exception as e:
-                result[key] = {"error": f"Resolver failed: {e}"}
+                logger.error(f"Widget Resolver failed | Key: {key!r} | Func: {func!r} | Error: {e}")
+
+                result[key] = {"error": "Failed to load this widget.", "key": key}
 
         return result

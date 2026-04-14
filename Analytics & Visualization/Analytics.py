@@ -1,3 +1,4 @@
+import operator
 import numpy as np
 import pandas as pd
 from typing import Any
@@ -54,12 +55,17 @@ class Analyzer ():
 
     def _apply_filters(self, dataframe: pd.DataFrame, filters: dict[str, Any] | None = None) -> pd.DataFrame:
         """
-        Filter a dataframe using exact-match and `isin` predicates.
+        Filter a dataframe using equality, membership, and operator predicates.
 
         Notes:
             - Scalar values apply equality filtering.
             - List values apply membership filtering via `isin`.
+            - Dict values apply operator filters, for example:
+              `{"salary": {">=": 5000, "<": 10000}}`.
+            - Supported operators are: `>`, `<`, `>=`, `<=`, `!=`, `==`,
+              and `contains` (case-insensitive literal substring match).
             - Unknown columns are ignored safely.
+            - Invalid/unsupported operations are skipped without raising.
 
         Args:
             dataframe (pd.DataFrame): Dataframe to filter.
@@ -74,10 +80,52 @@ class Analyzer ():
             
         filtered_dataframe = dataframe.copy()
 
+        op_map = {
+            '>': operator.gt,
+            '<': operator.lt,
+            '>=': operator.ge,
+            '<=': operator.le,
+            '!=': operator.ne,
+            '==': operator.eq,
+            'contains': lambda series, val: series.astype(str).str.contains(str(val), case = False, na = False)
+        }
+
         for col, value in filters.items():
             if col in filtered_dataframe.columns:
                 if isinstance(value, list):
                     filtered_dataframe = filtered_dataframe[filtered_dataframe[col].isin(value)]
+
+                elif isinstance(value, dict):
+                    col_series = filtered_dataframe[col]
+
+                    for op, val in value.items():
+                        if op in op_map:
+                            try:
+                                if op == 'contains':
+                                    mask = col_series.astype(str).str.contains(str(val), case = False, na = False, regex = False)
+                                
+                                elif op in {'>', '<', '>=', '<='}:
+                                    func = op_map[op]
+                                    left = pd.to_numeric(col_series, errors = 'coerce')
+                                    right = pd.to_numeric(pd.Series([val]), errors = 'coerce').iloc[0]
+
+                                    if pd.isna(right):
+                                        continue
+
+                                    mask = func(left, right).fillna(False)
+
+                                else:
+                                    func = op_map[op]
+                                    mask = func(col_series, val)
+
+                                filtered_dataframe = filtered_dataframe[mask]
+                                col_series = filtered_dataframe[col]
+
+                            except Exception as e:
+                                print(
+                                    f"Failed to apply filter for col{col!r}, operator {op!r} with value {val!r} Error: {e}"
+                                )
+                                continue
                 
                 else:
                     filtered_dataframe = filtered_dataframe[filtered_dataframe[col] == value]
@@ -152,7 +200,16 @@ class Analyzer ():
 
                     result_dataframe[rule["new_col"]] = method()
 
-            except Exception:
+            except Exception as e:
+                context_key = (
+                    "set_col" if "set_col" in rule else
+                    "new_col" if "new_col" in rule else
+                    "source_col" if "source_col" in rule else
+                    "rule"
+                )
+                context_value = rule.get(context_key, rule)
+                print( f"Failed to compute rules for context {context_key!r}, value {context_value!r}. Error: {e}"
+                )
                 continue
                 
         return result_dataframe
@@ -244,7 +301,8 @@ class Analyzer ():
 
         try:
             grouped = valid_data.groupby(x_col)[y_col].agg(agg_func).reset_index()
-        except Exception:
+        except Exception as e:
+            print(f"Failed to get numerical aggregation, aggergate function's value: {agg_func!r}, cols: [{x_col!r}, {y_col!r}]. Error: {e}")
             return []
 
         if pd.api.types.is_numeric_dtype(grouped[y_col]):
@@ -325,7 +383,8 @@ class Analyzer ():
 
             try:
                 grouped = data.groupby('time_x')[num_col].agg(agg_func).reset_index()
-            except Exception:
+            except Exception as e:
+                print(f"Failed to get time series, aggregate funnction's value: {agg_func!r}, cols: [{date_col!r}, {num_col!r}]. Error: {e}")
                 return []
 
             if pd.api.types.is_numeric_dtype(grouped[num_col]):
@@ -373,7 +432,8 @@ class Analyzer ():
             else:
                 try:
                     value = data[column].agg(agg_func)
-                except Exception:
+                except Exception as e:
+                    print(f"Failed to get kpi value, aggregate funnction's value: {agg_func!r}, col: [{column!r}]. Error: {e}")
                     value = None
 
         if pd.isna(value):
