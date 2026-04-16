@@ -393,7 +393,7 @@ if __name__ == "__main__":
         database_driver = os.getenv('DB_DRIVER'),
         database_user = os.getenv('DB_USER'),
         database_password = os.getenv('DB_PASSWORD'),
-        database_host = os.getenv('DB_HOST'),
+        database_host = os.getenv('BACKEND_HOST'),
         database_port = os.getenv('DB_PORT'),
         database_name = os.getenv('DB_NAME'),
         columns_types = sql_data_types,
