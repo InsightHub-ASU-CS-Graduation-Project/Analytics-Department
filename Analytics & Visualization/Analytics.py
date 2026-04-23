@@ -219,11 +219,12 @@ class Analyzer ():
             self,
             x_col: str,
             top_n: int | None = None,
+            show_others: bool = False,
             filters: dict | None = None,
             rules: list | None = None,
             orient: str = 'records',
             **kwargs
-        ) -> list:
+    ) -> dict[str, Any]:
         """
         Return distribution counts for a categorical column.
 
@@ -249,21 +250,43 @@ class Analyzer ():
         """
         data = self._apply_filters(self.dataframe, filters)
         
-        if data.empty or x_col not in data.columns: return []
+        if data.empty or x_col not in data.columns: return {"data": []}
 
         grouped = data[x_col].value_counts().reset_index()
         grouped.columns = ['x', 'y']
         
-        if top_n:
+        if top_n and show_others and len(grouped) > top_n:
+            top_df = grouped.head(top_n).copy()
+            others_df = grouped.iloc[top_n:].copy()
+
+            others_val = others_df['y'].sum()
+
+            others_breakdown = others_df[['x', 'y']].to_dict(orient = orient)
+
+            others_row = pd.DataFrame({
+                'x': ['Others'],
+                'y': [others_val],
+                'is_others': [True],
+                'others_breakdown': [others_breakdown]
+            })
+
+            top_df['is_others'] = False
+            top_df['others_breakdown'] = None
+
+            grouped = pd.concat([top_df, others_row], ignore_index = True)
+            
+        elif top_n:
             grouped = grouped.head(top_n)
             
         grouped = self._apply_computed_rules(grouped, rules)
 
+        response =  {"data": grouped.to_dict(orient = orient)}
+
         if kwargs:
-            for key, value in kwargs.items():
-                grouped[key] = value
+            response.update(kwargs)
+
+        return response
                 
-        return grouped.to_dict(orient = orient)
 
 
     def get_numerical_aggregation(
@@ -271,12 +294,14 @@ class Analyzer ():
             x_col: str,
             y_col: str,
             agg_func: str = 'mean',
+            round_value: int = 2,
             top_n: int | None = None,
+            show_others: bool = False,
             filters: dict | None = None,
             rules: list | None = None,
             orient: str = 'records',
             **kwargs
-        ) -> list:
+    ) -> dict[str, Any]:
         """
         Aggregate a numeric column by category.
 
@@ -285,6 +310,8 @@ class Analyzer ():
             y_col (str): Numeric column to aggregate.
             agg_func (str): Aggregation function name (for example: `mean`,
                 `sum`, `median`, `max`).
+            round_value (int): Decimal places used when the KPI result is a
+                floating-point value. Defaults to 2.
             top_n (int | None): Optional cap for highest `y` rows.
             filters (dict | None): Optional filters applied before aggregation.
             rules (list | None): Optional computed rules on output rows.
@@ -295,32 +322,53 @@ class Analyzer ():
             list: Serialized aggregation rows.
         """
         data = self._apply_filters(self.dataframe, filters)
-        if data.empty or x_col not in data.columns or y_col not in data.columns: return []
+        if data.empty or x_col not in data.columns or y_col not in data.columns: return {"data": []}
 
-        valid_data = data.dropna(subset=[y_col])
+        valid_data = data.dropna(subset = [y_col])
 
         try:
             grouped = valid_data.groupby(x_col)[y_col].agg(agg_func).reset_index()
         except Exception as e:
             print(f"Failed to get numerical aggregation, aggergate function's value: {agg_func!r}, cols: [{x_col!r}, {y_col!r}]. Error: {e}")
-            return []
+            return {"data": []}
 
         if pd.api.types.is_numeric_dtype(grouped[y_col]):
-            grouped[y_col] = grouped[y_col].round(0)
+            grouped[y_col] = grouped[y_col].round(round_value)
 
         grouped.columns = ['x', 'y']
         grouped = grouped.sort_values(by = 'y', ascending = False)
+
+        if top_n and show_others and len(grouped) > top_n:
+            top_df = grouped.head(top_n).copy()
+            others_df = grouped.iloc[top_n:].copy()
+
+            others_val = others_df['y'].agg(agg_func)
+
+            others_breakdown = others_df[['x', 'y']].to_dict(orient = orient)
+            
+            others_row = pd.DataFrame({
+                'x': ['Others'],
+                'y': [others_val],
+                'is_others': [True],
+                'others_breakdown': [others_breakdown] 
+            })
+
+            top_df['is_others'] = False
+            top_df['others_breakdown'] = None
+
+            grouped = pd.concat([top_df, others_row], ignore_index = True)
         
-        if top_n:
+        elif top_n:
             grouped = grouped.head(top_n)
             
         grouped = self._apply_computed_rules(grouped, rules)
 
+        response =  {"data": grouped.to_dict(orient = orient)}
+
         if kwargs:
-            for key, value in kwargs.items():
-                grouped[key] = value
-                
-        return grouped.to_dict(orient = orient)
+            response.update(kwargs)
+
+        return response
 
 
     def get_time_series(
@@ -333,7 +381,7 @@ class Analyzer ():
             rules: list | None = None,
             orient: str = 'records',
             **kwargs
-        ) -> list:
+    ) -> dict[str, Any]:
         """
         Build a time-series aggregation from a date/datetime column.
 
@@ -341,6 +389,7 @@ class Analyzer ():
             Accepted `time_period` values:
             - `M`: Monthly buckets (`YYYY-MM`)
             - `Y`: Yearly buckets (`YYYY`)
+            - `H`: Hourly Buckets (`YYYY-MM-DD HH:00`)
             - Any other value: Daily buckets (`YYYY-MM-DD`)
 
         Args:
@@ -358,20 +407,23 @@ class Analyzer ():
             list: Serialized time-series rows.
         """
         data = self._apply_filters(self.dataframe, filters)
-        if data.empty or date_col not in data.columns: return []
+        if data.empty or date_col not in data.columns: return {"data": []}
 
         data = data.dropna(subset = [date_col]).copy()
         data[date_col] = pd.to_datetime(data[date_col], errors = 'coerce')
         data = data.dropna(subset = [date_col])
 
         if data.empty:
-            return []
+            return {"data": []}
         
         if time_period.upper() == 'M':
             data['time_x'] = data[date_col].dt.strftime('%Y-%m')
         
         elif time_period.upper() == 'Y':
             data['time_x'] = data[date_col].dt.strftime('%Y')
+
+        elif time_period.upper() == 'H':
+            data['time_x'] = data[date_col].dt.strftime('%Y-%m-%d %H:00')
         
         else:
             data['time_x'] = data[date_col].dt.strftime('%Y-%m-%d')
@@ -379,13 +431,13 @@ class Analyzer ():
 
         if num_col and agg_func != 'count':
             if num_col not in data.columns:
-                return []
+                return {"data": []}
 
             try:
                 grouped = data.groupby('time_x')[num_col].agg(agg_func).reset_index()
             except Exception as e:
                 print(f"Failed to get time series, aggregate funnction's value: {agg_func!r}, cols: [{date_col!r}, {num_col!r}]. Error: {e}")
-                return []
+                return {"data": []}
 
             if pd.api.types.is_numeric_dtype(grouped[num_col]):
                 grouped[num_col] = grouped[num_col].round(0)
@@ -398,14 +450,22 @@ class Analyzer ():
        
         grouped = self._apply_computed_rules(grouped, rules)
 
+        response =  {"data": grouped.to_dict(orient = orient)}
+
         if kwargs:
-            for key, value in kwargs.items():
-                grouped[key] = value
-                
-        return grouped.to_dict(orient = orient)
+            response.update(kwargs)
+
+        return response
 
 
-    def get_kpi_value(self, column: str, agg_func: str = 'count', round_value: int = 2, filters: dict | None = None, **kwargs) -> dict:
+    def get_kpi_value(
+            self,
+            column: str,
+            agg_func: str = 'count',
+            round_value: int = 2,
+            filters: dict | None = None,
+            **kwargs
+    ) -> dict[str, Any]:
         """
         Compute a single KPI metric.
 
@@ -442,19 +502,27 @@ class Analyzer ():
             value = value.item()
             
         kpi_card = {
-            "value": round(value, round_value) if isinstance(value, float) else value,
-            "label": kwargs.get("label", column)
+            "data": round(value, round_value) if isinstance(value, float) else value,
+            "title": kwargs.get("label", column)
         }
 
+        kwargs.pop("title", None)
+
         if kwargs:
-            for key, val in kwargs.items():
-                if key != "label":
-                    kpi_card[key] = val
-                    
+            kpi_card.update(kwargs)
+
         return kpi_card
 
     
-    def get_bins(self, col: str, bins: int = 10, filters: dict = None, rules: list = None, orient: str = 'records', **kwargs) -> list:
+    def get_bins(
+            self,
+            col: str,
+            bins: int = 10,
+            filters: dict = None,
+            rules: list = None,
+            orient: str = 'records',
+            **kwargs
+    ) -> dict[str, Any]:
         """
         Create histogram bins for a numeric column.
 
@@ -471,14 +539,14 @@ class Analyzer ():
         """
         data = self._apply_filters(self.dataframe, filters)
         
-        if data.empty or col not in data.columns: return []
+        if data.empty or col not in data.columns: return {"data": []}
 
         if not isinstance(bins, int) or bins <= 0:
-            return []
+            return {"data": []}
 
         numeric_values = pd.to_numeric(data[col], errors = 'coerce').dropna()
         if numeric_values.empty:
-            return []
+            return {"data": []}
 
         counts, bin_edges = np.histogram(numeric_values, bins = bins)
 
@@ -487,7 +555,9 @@ class Analyzer ():
         
         grouped = self._apply_computed_rules(grouped, rules)
        
+        response =  {"data": grouped.to_dict(orient = orient)}
+
         if kwargs:
-            for key, value in kwargs.items(): grouped[key] = value
-            
-        return grouped.to_dict(orient = orient)
+            response.update(kwargs)
+
+        return response
