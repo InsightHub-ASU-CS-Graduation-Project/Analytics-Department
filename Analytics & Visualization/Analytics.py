@@ -231,13 +231,16 @@ class Analyzer ():
         Args:
             x_col (str): Categorical column to aggregate.
             top_n (int | None): Optional limit for top categories.
+            show_others (bool): If True, collapse categories outside `top_n`
+                into an `"Others"` row with a breakdown payload.
             filters (dict | None): Optional pre-aggregation filters.
             rules (list | None): Optional computed rules applied to the result.
             orient (str): Output orientation for `DataFrame.to_dict`.
-            **kwargs: Extra static fields appended to each output row.
+            **kwargs: Extra metadata merged into the returned response object.
 
         Returns:
-            list: Serialized distribution rows in the requested orientation.
+            dict[str, Any]: Response object with a `"data"` key containing the
+            serialized distribution rows.
 
         Example:
         ```
@@ -310,16 +313,19 @@ class Analyzer ():
             y_col (str): Numeric column to aggregate.
             agg_func (str): Aggregation function name (for example: `mean`,
                 `sum`, `median`, `max`).
-            round_value (int): Decimal places used when the KPI result is a
-                floating-point value. Defaults to 2.
+            round_value (int): Decimal places used when the aggregated value is
+                numeric. Defaults to 2.
             top_n (int | None): Optional cap for highest `y` rows.
+            show_others (bool): If True, collapse categories outside `top_n`
+                into an `"Others"` row while preserving a breakdown payload.
             filters (dict | None): Optional filters applied before aggregation.
             rules (list | None): Optional computed rules on output rows.
             orient (str): Output orientation for `DataFrame.to_dict`.
-            **kwargs: Extra static fields appended to each output row.
+            **kwargs: Extra metadata merged into the returned response object.
 
         Returns:
-            list: Serialized aggregation rows.
+            dict[str, Any]: Response object with a `"data"` key containing the
+            serialized aggregation rows.
         """
         data = self._apply_filters(self.dataframe, filters)
         if data.empty or x_col not in data.columns or y_col not in data.columns: return {"data": []}
@@ -341,8 +347,14 @@ class Analyzer ():
         if top_n and show_others and len(grouped) > top_n:
             top_df = grouped.head(top_n).copy()
             others_df = grouped.iloc[top_n:].copy()
+            others_categories = others_df['x'].tolist()
+            others_source = valid_data[valid_data[x_col].isin(others_categories)]
 
-            others_val = others_df['y'].agg(agg_func)
+            others_val = others_source[y_col].agg(agg_func)
+            if isinstance(others_val, np.generic):
+                others_val = others_val.item()
+            if isinstance(others_val, float):
+                others_val = round(others_val, round_value)
 
             others_breakdown = others_df[['x', 'y']].to_dict(orient = orient)
             
@@ -401,10 +413,11 @@ class Analyzer ():
             filters (dict | None): Optional filters applied before aggregation.
             rules (list | None): Optional computed rules on output rows.
             orient (str): Output orientation for `DataFrame.to_dict`.
-            **kwargs: Extra static fields appended to each output row.
+            **kwargs: Extra metadata merged into the returned response object.
 
         Returns:
-            list: Serialized time-series rows.
+            dict[str, Any]: Response object with a `"data"` key containing the
+            serialized time-series rows.
         """
         data = self._apply_filters(self.dataframe, filters)
         if data.empty or date_col not in data.columns: return {"data": []}
@@ -417,17 +430,24 @@ class Analyzer ():
             return {"data": []}
         
         if time_period.upper() == 'M':
-            data['time_x'] = data[date_col].dt.strftime('%Y-%m')
-        
+            data['time_x'] = data[date_col].dt.to_period('M').dt.to_timestamp()
+            freq = 'MS'
+            format = '%Y-%m'
+            
         elif time_period.upper() == 'Y':
-            data['time_x'] = data[date_col].dt.strftime('%Y')
+            data['time_x'] = data[date_col].dt.to_period('Y').dt.to_timestamp()
+            freq = 'YS'
+            format = '%Y'
 
         elif time_period.upper() == 'H':
-            data['time_x'] = data[date_col].dt.strftime('%Y-%m-%d %H:00')
-        
+            data['time_x'] = data[date_col].dt.floor('h')
+            freq = 'h'
+            format = '%Y-%m-%d %H:00'
+            
         else:
-            data['time_x'] = data[date_col].dt.strftime('%Y-%m-%d')
-
+            data['time_x'] = data[date_col].dt.floor('d')
+            freq = 'D'
+            format = '%Y-%m-%d'
 
         if num_col and agg_func != 'count':
             if num_col not in data.columns:
@@ -441,11 +461,26 @@ class Analyzer ():
 
             if pd.api.types.is_numeric_dtype(grouped[num_col]):
                 grouped[num_col] = grouped[num_col].round(0)
+            
+            grouped.columns = ['time_x', 'y']
         
         else:
             grouped = data.groupby('time_x').size().reset_index(name = 'y')
+            grouped.columns = ['time_x', 'y']
 
-        grouped.columns = ['x', 'y']
+        if not grouped.empty:
+            min_date = grouped['time_x'].min()
+            max_date = grouped['time_x'].max()
+            
+            full_date_range = pd.date_range(start = min_date, end = max_date, freq = freq)
+            
+            grouped = grouped.set_index('time_x').reindex(full_date_range, fill_value = 0).reset_index()
+            grouped.columns = ['x', 'y']
+            
+            grouped['x'] = grouped['x'].dt.strftime(format)
+        else:
+            grouped.columns = ['x', 'y']
+
         grouped = grouped.sort_values(by = 'x', ascending = True)
        
         grouped = self._apply_computed_rules(grouped, rules)
@@ -476,11 +511,12 @@ class Analyzer ():
                 floating-point value. Defaults to 2.
             filters (dict | None): Optional filters applied before KPI
                 computation.
-            **kwargs: Optional metadata fields for the response card. `label`
-                customizes KPI label.
+            **kwargs: Optional metadata fields for the response card. `title`
+                customizes the KPI title.
 
         Returns:
-            dict: KPI card with `value`, `label`, and optional extra fields.
+            dict[str, Any]: KPI payload containing `"data"`, `"title"`, and
+            any additional metadata.
         """
         data = self._apply_filters(self.dataframe, filters)
         
@@ -503,10 +539,8 @@ class Analyzer ():
             
         kpi_card = {
             "data": round(value, round_value) if isinstance(value, float) else value,
-            "title": kwargs.get("label", column)
+            "title": kwargs.pop("title", column)
         }
-
-        kwargs.pop("title", None)
 
         if kwargs:
             kpi_card.update(kwargs)
@@ -532,10 +566,11 @@ class Analyzer ():
             filters (dict | None): Optional filters applied before binning.
             rules (list | None): Optional computed rules on output rows.
             orient (str): Output orientation for `DataFrame.to_dict`.
-            **kwargs: Extra static fields appended to each output row.
+            **kwargs: Extra metadata merged into the returned response object.
 
         Returns:
-            list: Serialized histogram bins as `x` (label) and `y` (count).
+            dict[str, Any]: Response object with a `"data"` key containing the
+            serialized histogram rows.
         """
         data = self._apply_filters(self.dataframe, filters)
         
