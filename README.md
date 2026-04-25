@@ -29,7 +29,7 @@ This repository contains the **Analytics Department** module, which serves as th
 
 ### Architecture Breakdown:
 
-The diagram highlights the two main functions of this analytics system:
+There are two main functions of this analytics system:
 
 1.  **Offline Batch ETL:** Python scripts orchestrated by an Airflow Scheduler periodically ingest raw job market data from the **Adzuna Job Market API**. This data is cleaned, modeled, and stored in a specialized **Dimensional Model (Star Schema)** within the SQL Server Data Warehouse.
 2.  **Real-Time API & BI Engine:** The **FastAPI Dynamic BI Engine** processes real-time requests for home dashboards and advanced exploration endpoints. It reads optimized data from the SQL Server Star Schema and serves structured **JSON Payloads** to the central **ASP.NET Core API Gateway** for final rendering on the user dashboard.
