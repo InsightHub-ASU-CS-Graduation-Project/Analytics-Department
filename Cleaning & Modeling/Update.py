@@ -5,8 +5,9 @@ import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy.types import NVARCHAR, Float, Integer, DateTime
 
-from Fetching import DataFetcher
 from Cleaning import SearchFile
+from Requesting import BaseAPIClient
+from Handling import LocalDataHandler
 
 
 
@@ -23,32 +24,81 @@ load_dotenv(
 
 
 
-def get_data( fetcher: DataFetcher, total_target_jobs: int = 55555):
+def get_data(total_target_jobs: int = 55555) -> tuple[BaseAPIClient, LocalDataHandler]:
     """
     Fetch raw datasets from the configured API source and persist them to the
-    project's raw-data directory.
+    project's raw-data directory using the decoupled architecture.
 
     Args:
-        fetcher (DataFetcher): An initialized fetcher that knows how to call the
-            source API and save each endpoint locally.
         total_target_jobs (int): Approximate number of search jobs to target when
             collecting paginated search results. Defaults to 55555.
 
     Returns:
-        DataFetcher: The same fetcher instance after the fetch operation
-        completes, which makes chaining or later inspection convenient.
+        tuple[BaseAPIClient, LocalDataHandler]: The initialized API client and 
+        storage handler instances after the fetch operation completes, 
+        making chaining or later inspection convenient.
+
+    Raises:
+        ValueError: If API credentials are missing or `total_target_jobs` is
+        not positive.
 
     Example:
     ```
-        fetcher = DataFetcher()
-        fetcher = get_data(fetcher, total_target_jobs=25000)
+        api_client, storage = get_data(total_target_jobs=25000)
     ```
     """
-    # ---------- fetch data (Temporarily Disabled)
-    fetcher = fetcher
-    fetcher.fetch_and_save_data(total_target_jobs = total_target_jobs)
+    if total_target_jobs <= 0:
+        raise ValueError("'total_target_jobs' must be a positive integer.")
 
-    return fetcher
+    app_id = os.getenv("ADZUNA_API_ID")
+    app_key = os.getenv("ADZUNA_APP_KEY")
+
+    if not app_id or not app_key:
+        raise ValueError("\"ADZUNA_API_ID\" and \"ADZUNA_APP_KEY\" environment variables must be set.")
+
+
+    # ---------- Requester Data
+    api_client = BaseAPIClient(base_url = "https://api.adzuna.com/v1/api/jobs")
+
+    # ---------- Handler Data
+    storage = LocalDataHandler()
+
+
+    # --- Prepare the keys and parameters
+    api_client.params.update({
+        "app_id": app_id,
+        "app_key": app_key
+    })
+    
+    countries = [
+        "gb", "us", "at", "au", "be", "br", "ca", "ch", "de", 
+        "es", "fr", "in", "it", "mx", "nl", "nz", "pl", "sg", "za"
+    ]
+    
+
+    print("\nStarting Fetching for Search...")
+   
+    # ---------- Fetching
+    total_pages_budget = max(1, total_target_jobs // 50)
+    
+    search_data = api_client.request(
+        method = "GET",
+        url = "{target}/search/{page}",
+        is_paginated = True,
+        targets = countries,
+        weight_endpoint_template = "{target}/search/1",
+        total_pages_budget = total_pages_budget,
+        extraction_key = "results",
+        count_extraction_key = "count",
+        params = {
+            "results_per_page": 50,
+            "sort_by": "date"
+        }
+    )
+    
+    storage.save_payload_to_json(search_data, file_name = "search")
+    
+    return api_client, storage
 
 
 def clean_data(dataframe: SearchFile):
@@ -349,10 +399,9 @@ def clean_data(dataframe: SearchFile):
 # --- Main Execution
 
 if __name__ == "__main__":
-    fetcher = DataFetcher()
     search_dataframe = SearchFile()
     
-    # fetcher = get_data(fetcher = fetcher, total_target_jobs = 55555)
+    client, handler = get_data(total_target_jobs = 55555)
 
     search_dataframe = clean_data(dataframe = search_dataframe)
 
