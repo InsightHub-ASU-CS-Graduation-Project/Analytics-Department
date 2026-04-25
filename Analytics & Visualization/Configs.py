@@ -7,7 +7,7 @@ def get_home_page_config(analyzer):
             agg_func = 'count',
             round_value = 0,
             filters = req.filters, 
-            title = "Posted Laterly",
+            title = "Posted recently",
             suffix = "Jobs",
             type = "card"
         ),
