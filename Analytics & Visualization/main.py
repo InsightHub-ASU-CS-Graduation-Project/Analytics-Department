@@ -1,9 +1,13 @@
 import os
+import sys
 import logging
 import uvicorn
 import pandas as pd
+from pathlib import Path
 from fastapi import FastAPI
 from dotenv import load_dotenv
+
+sys.path.append(str(Path(__file__).parent))
 
 from Analytics import Analyzer
 from Services import PageBuilder
