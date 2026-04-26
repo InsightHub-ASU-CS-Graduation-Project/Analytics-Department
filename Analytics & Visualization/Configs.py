@@ -24,19 +24,30 @@ def get_home_page_config(analyzer):
             data_list := res.get('data', []),
             
             {
-                "data": round(sum(d['y'] for d in data_list) / len(data_list), 2) if data_list else 0,
-                "title": "Posted per Hour",
+                "data": round(sum(d['y'] for d in data_list) / len(data_list), 0) if data_list else 0,
+                "title": "Avg Jobs per Hour",
                 "suffix": " /h",
-                "sparkline_data": data_list,
 
                 "trend": (
                     "up" if data_list[-1]['y'] > data_list[-2]['y'] else "down"
                 ) if len(data_list) > 1 else "neutral",
 
-                "tooltip": "At {point.x}, there is {point.y} Jobs posted",
-                "type": "card"
+                "type": "card",
             }
         )[-1],
+
+        "Hourly Postings Trend": lambda req: analyzer.get_time_series(
+            date_col = "created",
+            time_period = "H",
+            filters = req.filters,
+            rules = req.rules,
+            orient = req.orient if req.orient else 'records',
+            title = "Job Postings Trend (Hourly)",
+            type = "line",
+            tooltip_format = "{point.y} Jobs posted at {point.x}",
+            description = "Trace the rhythm of recruitment. " \
+            "This chart reveals the exact peaks and valleys of market activity over time."
+        ),
 
 
         "Seniority Level Distribution": lambda req: analyzer.get_categorical_distribution(
@@ -50,7 +61,9 @@ def get_home_page_config(analyzer):
                 tooltip_format = "Level: {point.x}\nCount: {point.y} Jobs",
                 show_data_labels = True,
                 show_legend = True,
-                type = "doughnut"
+                type = "doughnut",
+                description = "Are companies seeking fresh talent or seasoned leaders? " \
+                "Discover the exact experience levels shaping today's dynamic workforce."
         ),
 
 
@@ -66,7 +79,9 @@ def get_home_page_config(analyzer):
                 rules = req.rules,
                 orient = req.orient if req.orient else 'records',
                 title = "Average Salary by Seniority",
-                type = "column"
+                type = "column",
+                description = "Follow the money. " \
+                "Trace the financial journey from entry-level beginnings all the way up to the executive suites."
             ),
 
             [
@@ -92,7 +107,9 @@ def get_home_page_config(analyzer):
             rules = req.rules,
             orient = req.orient if req.orient else 'records',
             title = "Most Demanded Roles",
-            type = "treemap"
+            type = "treemap",
+            description = "Step into the spotlight. " \
+            "These are the highly sought-after roles currently dominating the global talent hunt."
         ),
 
 
@@ -104,7 +121,9 @@ def get_home_page_config(analyzer):
                 filters = req.filters,
                 orient = req.orient if req.orient else 'records',
                 title = "Top 7 Companies: Postings vs Total Salary",
-                type = "grouped bar"
+                type = "grouped bar",
+                description = "Meet the market heavyweights. " \
+                "See who isn't just hiring the most, but also investing the heaviest financial capital."
             ),
 
             [
@@ -154,19 +173,30 @@ def get_explore_page_config(analyzer):
             data_list := res.get('data', []),
             
             {
-                "data": round(sum(d['y'] for d in data_list) / len(data_list), 2) if data_list else 0,
-                "title": "Posted per Hour",
+                "data": round(sum(d['y'] for d in data_list) / len(data_list), 0) if data_list else 0,
+                "title": "Avg Jobs per Hour",
                 "suffix": " /h",
-                "sparkline_data": data_list,
 
                 "trend": (
                     "up" if data_list[-1]['y'] > data_list[-2]['y'] else "down"
                 ) if len(data_list) > 1 else "neutral",
-                
-                "tooltip": "At {point.x}, there is {point.y} Jobs posted",
-                "type": "card"
+
+                "type": "card",
             }
         )[-1],
+
+        "Hourly Postings Trend": lambda req: analyzer.get_time_series(
+            date_col = "created",
+            time_period = "H",
+            filters = req.filters,
+            rules = req.rules,
+            orient = req.orient if req.orient else 'records',
+            title = "Job Postings Trend (Hourly)",
+            type = "line",
+            tooltip_format = "{point.y} Jobs posted at {point.x}",
+            description = "Trace the rhythm of recruitment. " \
+            "This chart reveals the exact peaks and valleys of market activity over time."
+        ),
 
 
         "Top 10 Jobs": lambda req: (
@@ -177,7 +207,9 @@ def get_explore_page_config(analyzer):
                 filters = req.filters,
                 orient = req.orient if req.orient else 'records',
                 title = "Job Roles by Category",
-                type = "hier treemap"
+                type = "hier treemap",
+                description = "Step into the spotlight. " \
+            "These are the highly sought-after roles currently dominating the global talent hunt."
             ),
 
             [
@@ -206,7 +238,9 @@ def get_explore_page_config(analyzer):
                 filters = req.filters,
                 orient = req.orient if req.orient else 'records',
                 title = "Top 7 Companies: Postings vs Total Salary",
-                type = "multiple bar"
+                type = "multiple bar",
+                description = "Meet the market heavyweights. " \
+                "See who isn't just hiring the most, but also investing the heaviest financial capital."
             ),
 
             [

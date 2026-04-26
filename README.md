@@ -137,7 +137,7 @@ The engine serves highly structured, frontend-ready responses. Here is an exampl
    ```
 4. **Start the FastAPI Server:**
    ```bash
-   uvicorn API_Engine.main:app --reload
+   uvicorn "Analytics & Visualization.main:app" --reload
    ```
 
 ---
