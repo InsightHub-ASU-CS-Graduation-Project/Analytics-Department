@@ -1,0 +1,32 @@
+# --- Core API & Routing ---
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+pydantic>=2.0.0
+
+# --- Data Manipulation & Analytics ---
+pandas>=2.0.0
+numpy>=1.24.0
+
+# --- Web Requests & Network ---
+requests>=2.31.0
+urllib3>=2.0.0
+
+# --- NLP & Text Processing ---
+spacy>=3.6.0
+langdetect>=1.0.9
+deep-translator>=1.11.4
+
+# --- Geography & Currency ---
+geopy>=2.4.0
+pycountry>=22.3.5
+Babel>=2.12.1
+yfinance>=0.2.28
+
+# --- Database & Environment ---
+SQLAlchemy>=2.0.0
+python-dotenv>=1.0.0
+
+# --- Database Drivers ---
+pyodbc>=4.0.39          # For SQL Server
+psycopg2-binary>=2.9.9 # For PostgreSQL
+pymysql>=1.1.0          # For MySQL
