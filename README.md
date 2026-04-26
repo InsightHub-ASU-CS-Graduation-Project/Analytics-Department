@@ -122,14 +122,14 @@ The engine serves highly structured, frontend-ready responses. Here is an exampl
 
 ## 🚀 How to Run
 
-1. **Clone the repository (> Note: The `en_core_web_sm` model is required if you want to use `extract_entities_nlp()` method.):**
+1. **Clone the repository:**
    ```bash
    git clone https://github.com/InsightHub-ASU-CS-Graduation-Project/Analytics-Department.git
-   python -m spacy download en_core_web_sm
    ```
-2. **Install dependencies:**
+2. **Install dependencies (> Note: The `en_core_web_sm` model is required if you want to use `extract_entities_nlp()` method.):**
    ```bash
    pip install -r requirements.txt
+   python -m spacy download en_core_web_sm
    ```
 3. **Run the ETL Pipeline (> Note: This step requires configuring your own data source API keys inside `update.py`):**
    ```bash
