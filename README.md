@@ -130,9 +130,9 @@ The engine serves highly structured, frontend-ready responses. Here is an exampl
    ```bash
    pip install -r requirements.txt
    ```
-3. **Run the ETL Pipeline (> Note: This step requires configuring your own data source API keys inside `Update.py`):**
+3. **Run the ETL Pipeline (> Note: This step requires configuring your own data source API keys inside `update.py`):**
    ```bash
-   python "Cleaning & Modeling/Update.py"
+   python "Cleaning & Modeling/update.py"
    ```
 4. **Start the FastAPI Server:**
    ```bash
