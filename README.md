@@ -49,26 +49,33 @@ There are two main functions of this analytics system:
 ## 💡 Business Questions This Module Enables
 
 By processing complex queries instantly, this backend empowers business stakeholders to answer critical questions:
-* *"What is the real-time average salary for Data Analyst roles, adjusted by region and currency?"*
-* *"Which skills are currently dominating the job market, and how do they cluster across top-tier companies?"*
-* *"How does the distribution of entry-level vs. senior roles change dynamically when we filter for remote work?"*
+* *"When is the peak time for recruitment activity?"*
+* *"What is the current seniority gap in the market?"*
+* *"Which roles are currently dominating market demand?"*
+* *"Who are the top market movers and spenders?"*
 
 ---
 
 ## ⚙️ Key Features (Business & Technical Value)
 
-* **Robust ETL Pipeline (`Cleaning.py` & `Handling.py`)**
-  * **Technical:** Executes advanced NLP for job title standardization, geocoding for regional mapping, and multi-currency conversions. 
-  * **Business:** Creates a reliable "Single Source of Truth," ensuring executives make decisions on accurate, standardized data.
+* **Automated Ingestion & Orchestration (`update.py` & `Requesting.py`)**
+  * **Technical:** Implements a decoupled HTTP client with exponential backoff and distributed pagination. The orchestrator script manages the end-to-end flow from fetching to database loading.
+  * **Business:** Ensures reliable, uninterrupted data collection without server timeouts, building a highly available data pipeline.
+* **Advanced Data Transformation (`Cleaning.py`)**
+  * **Technical:** Executes NLP (spaCy) for entity/skill extraction, rate-limited geocoding for regional mapping, and multi-currency conversions using historical exchange rates.
+  * **Business:** Creates a reliable "Single Source of Truth," ensuring executives make decisions on accurate, standardized, and globally comparable data.
+* **Optimized Storage & Caching (`Handling.py` & `Caching.py`)**
+  * **Technical:** Manages local JSON serialization and implements a robust state management (Caching) system for NLP and geocoding outputs.
+  * **Business:** Drastically reduces third-party API costs and processing time by preventing redundant computations on historical data.
 * **Config-Driven BI Engine (`Configs.py`)**
   * **Technical:** Uses Python dictionaries and optimized lambda functions (leveraging the `:=` walrus operator) to calculate multi-dimensional metrics in a single memory pass.
   * **Business:** Reduces Time-to-Market. New KPIs or filters can be injected via config files without rewriting core application logic.
-* **Smart Categorical Binning (`Analytics.py`)**
-  * **Technical:** An algorithmic approach (`show_others`) that dynamically identifies statistically significant categories and groups the "long-tail" data into an "Others" bucket.
-  * **Business:** Prevents visual clutter on frontend dashboards, ensuring a clean UI while retaining deep-dive capabilities.
-* **Resilient Dashboard Orchestration (`Services.py`)**
-  * **Technical:** Isolates execution contexts for every visual widget requested by the frontend. 
-  * **Business:** Ensures high availability. If anomalous data crashes one chart, the rest of the dashboard continues to render flawlessly.
+* **Dynamic Analytics & Smart Binning (`Analytics.py`)**
+  * **Technical:** Features an algorithmic approach (`show_others`) to group "long-tail" data into an "Others" bucket, alongside safe dynamic expression evaluation (`pandas.eval`).
+  * **Business:** Prevents visual clutter on frontend dashboards while retaining deep-dive capabilities and ensuring secure ad-hoc calculations.
+* **Resilient Routing & Orchestration (`Services.py`, `Routes.py` & `main.py`)**
+  * **Technical:** Isolates execution contexts for visual widgets in the service layer and routes standard API responses using Pydantic validation.
+  * **Business:** Ensures high availability and a flawless user experience. If anomalous data crashes one chart, the rest of the dashboard continues to render perfectly.
 
 ---
 
