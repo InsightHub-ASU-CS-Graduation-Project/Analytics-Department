@@ -168,6 +168,7 @@ The codebase is organized by logical business functions, ensuring it is easy to 
 |
 ├── Shared Data/                # Staging area for "Single Source of Truth" optimized datasets
 ├── .env                        # Environment variables and sensitive infrastructure credentials
+├── (env example.txt)           # an example of how your `.env` should be
 └── (requirements.txt)          # Project dependencies and environment specifications
 ```
 

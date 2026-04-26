@@ -1,0 +1,18 @@
+that's an example of how your .env should be
+
+# Write your ID and Keys here
+ADZUNA_API_ID = 
+ADZUNA_APP_KEY = 
+
+# To Run the server
+ANALYST_HOST = 127.0.0.1             # to run offline on local host
+CHARTS_PORT = 8000                   # choose what you want
+
+# Write your database credentials
+DB_TYPE = 
+DB_DRIVER = 
+DB_USER = 
+DB_PASSWORD = 
+BACKEND_HOST = 127.0.0.1             # to run offline on local host
+DB_PORT = 1433                       # choose what you want
+DB_NAME = 
