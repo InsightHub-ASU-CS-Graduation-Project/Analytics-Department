@@ -4,14 +4,18 @@
 # ------------------ Raw Data
 Cleaning & Modeling/Raw Data/
 
+# ------------------ References
+Cleaning & Modeling/Lexicon References/
+
 # ------------------ Cache
 Cleaning & Modeling/__pycache__/
 Analytics & Visualization/__pycache__/
-
-Cleaning & Modeling/Cache Data/
 
 # ------------------ Settings
 .vscode/
 
 # ------------------ Our Data
 Shared Data/
+
+# ----------------- App Settings
+Settings/
