@@ -137,7 +137,7 @@ The engine serves highly structured, frontend-ready responses. Here is an exampl
    ```
 4. **Start the FastAPI Server:**
    ```bash
-   uvicorn "Analytics & Visualization.main:app" --reload --host [Put Your Host] --port [Put Your Port]
+   uvicorn "Analytics & Visualization.main:app" --reload --host [Your Host] --port [Your Port]
    ```
 
 ---
