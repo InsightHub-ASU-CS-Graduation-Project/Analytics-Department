@@ -15,6 +15,7 @@ urllib3>=2.0.0
 spacy>=3.6.0
 langdetect>=1.0.9
 deep-translator>=1.11.4
+pyahocorasick>=2.0.0
 
 # --- Geography & Currency ---
 geopy>=2.4.0
@@ -27,6 +28,6 @@ SQLAlchemy>=2.0.0
 python-dotenv>=1.0.0
 
 # --- Database Drivers ---
-pyodbc>=4.0.39          # For SQL Server
-psycopg2-binary>=2.9.9 # For PostgreSQL
-pymysql>=1.1.0          # For MySQL
+pyodbc>=4.0.39          # For 'SQL Server'
+psycopg2-binary>=2.9.9  # For 'PostgreSQL'
+pymysql>=1.1.0          # For 'MySQL'

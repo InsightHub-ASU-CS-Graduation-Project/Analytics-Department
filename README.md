@@ -59,13 +59,13 @@ By processing complex queries instantly, this backend empowers business stakehol
 ## ⚙️ Key Features (Business & Technical Value)
 
 * **Automated Ingestion & Orchestration (`update.py` & `Requesting.py`)**
-  * **Technical:** Implements a decoupled HTTP client with exponential backoff and distributed pagination. The orchestrator script manages the end-to-end flow from fetching to database loading.
+  * **Technical:** Implements a decoupled HTTP client with exponential backoff and distributed pagination. Features robust request chunking to safely bypass URL length limits when querying via multiple IDs. The orchestrator script utilizes a unified RAM-based update engine to fetch, merge, deduplicate by ID, and enforce a 90-day data retention prune within a single SSD write operation.
   * **Business:** Ensures reliable, uninterrupted data collection without server timeouts, building a highly available data pipeline.
 * **Advanced Data Transformation (`Cleaning.py`)**
-  * **Technical:** Executes NLP (spaCy) for entity/skill extraction, rate-limited geocoding for regional mapping, and multi-currency conversions using historical exchange rates.
+  * **Technical:** Executes NLP (spaCy) for entity/skill extraction, rate-limited geocoding for regional mapping, and multi-currency conversions. Integrates a high-performance Aho-Corasick automaton for rapid, priority-aware categorical assignment across large datasets.
   * **Business:** Creates a reliable "Single Source of Truth," ensuring executives make decisions on accurate, standardized, and globally comparable data.
 * **Optimized Storage & Caching (`Handling.py` & `Caching.py`)**
-  * **Technical:** Manages local JSON serialization and implements a robust state management (Caching) system for NLP and geocoding outputs.
+  * **Technical:** Manages local JSON serialization, automated appending, and implements a robust state management (Caching) system for NLP and geocoding outputs.
   * **Business:** Drastically reduces third-party API costs and processing time by preventing redundant computations on historical data.
 * **Config-Driven BI Engine (`Configs.py`)**
   * **Technical:** Uses Python dictionaries and optimized lambda functions (leveraging the `:=` walrus operator) to calculate multi-dimensional metrics in a single memory pass.
@@ -137,41 +137,44 @@ The engine serves highly structured, frontend-ready responses. Here is an exampl
    ```
 4. **Start the FastAPI Server:**
    ```bash
-   uvicorn "Analytics & Visualization.main:app" --reload
+   uvicorn "Analytics & Visualization.main:app" --reload --host [Your Host Here] --port [Your Port Here]
    ```
 
 ---
 
 ## 📂 Modular Project Structure
 
-The codebase is organized by logical business functions, ensuring it is easy to maintain and scale:
+The codebase is organized by clear business domains so ingestion, cleaning, analytics, and API serving can evolve independently.
 
 ```text
+Analytics-Department/
 ├── Cleaning & Modeling/
-│   ├── Raw Data/               # Landing zone for immutable raw API responses
-│   ├── Cache Data/
-│   │   ├── Automated/          # Persistent state for NLP results, geocoding, and translations
-│   │   └── Manual/             # Human-in-the-loop overrides and custom replacement logic
-│   │
-│   ├── Caching.py              # Low-latency state management for repetitive data operations
-│   ├── Cleaning.py             # Core ETL engine: NLP-driven entity extraction and data normalization
-│   ├── Handling.py             # Optimized File I/O handler for JSON serialization and lexicon builds
-│   ├── Requesting.py           # Robust API client with automated retries and distributed pagination
-│   └── update.py               # End-to-end pipeline orchestrator (Ingestion → Transformation → Persistence)
-|
+│   ├── Raw Data/                    # Raw API payload storage (e.g., search.json)
+│   ├── Lexicon References/          # Domain dictionaries and normalization references
+│   ├── Settings/
+│   │   ├── Cache Data/
+│   │   │   └── Automated/           # Persistent NLP/geocoding/exchange-rate caches
+│   │   └── Timers/
+│   │       └── run_state.json       # Scheduler state for update pipeline
+│   ├── Caching.py                   # Cache manager abstraction for reusable state
+│   ├── Cleaning.py                  # Data cleaning, enrichment, and transformation engine
+│   ├── Handling.py                  # JSON/file I/O utilities and payload update helpers
+│   ├── Requesting.py                # API client with retries, pagination, and chunking
+│   └── update.py                    # Pipeline orchestrator and scheduled execution loop
+│
 ├── Analytics & Visualization/
-│   ├── Analytics.py            # High-performance analytical engine for multi-dimensional aggregations
-│   ├── Configs.py              # Dynamic, metadata-driven dashboard and KPI definitions
-│   ├── Routes.py               # RESTful API endpoints with Pydantic-validated request/response cycles
-│   ├── Services.py             # Resilient Service Layer for fault-tolerant widget resolution
-│   └── main.py                 # ASGI application entry point and Uvicorn server configuration
-|
-├── Shared Data/                # Staging area for "Single Source of Truth" optimized datasets
-├── .env                        # Environment variables and sensitive infrastructure credentials
-├── (env example.txt)           # an example of how your `.env` should be
-└── (requirements.txt)          # Project dependencies and environment specifications
+│   ├── Analytics.py                 # Metric/KPI computation and aggregation engine
+│   ├── Configs.py                   # Config-driven chart and KPI definitions
+│   ├── Routes.py                    # FastAPI route handlers
+│   ├── Services.py                  # Service-layer orchestration and resilience guards
+│   └── main.py                      # FastAPI app entrypoint
+│
+├── Shared Data/                     # Processed datasets shared across modules
+├── .env                             # Runtime secrets and environment configuration
+├── env example.txt                  # Template for required environment variables
+├── requirements.txt                 # Python dependencies
+└── README.md
 ```
-
 ---
 
 ## 🌟 Why This Project Stands Out
