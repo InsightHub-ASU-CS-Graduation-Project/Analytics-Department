@@ -1,9 +1,11 @@
 import os
+import re
 import time
 import json
 import spacy
 import urllib
 import pycountry
+import ahocorasick
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -44,7 +46,7 @@ class JsonFile(pd.DataFrame):
         return type(self)
 
 
-    def __init__(self, data = None, json_file_path: str = None, *args, **kwargs) -> None:
+    def __init__(self, data = None, json_file_path: str = None, key: str = None, *args, **kwargs) -> None:
         """
         Initialize the custom dataframe from in-memory data or a JSON file.
 
@@ -53,6 +55,9 @@ class JsonFile(pd.DataFrame):
             json_file_path (str, optional): Path to a JSON file whose content
                 will be normalized into tabular form before dataframe
                 initialization.
+            key (str, optional): Optional top-level key used to extract a
+                nested list/dict from the JSON payload before normalization.
+                The loaded payload must be a dictionary when this is provided.
             *args: Additional positional arguments forwarded to
                 `pandas.DataFrame`.
             **kwargs: Additional keyword arguments forwarded to
@@ -60,14 +65,27 @@ class JsonFile(pd.DataFrame):
 
         Returns:
             None
+
+        Raises:
+            TypeError: If `key` is provided for a non-dictionary JSON payload.
+            KeyError: If `key` is provided but is not present in the JSON payload.
         """
         if json_file_path is not None:
             with open(json_file_path, "r", encoding = 'utf-8') as file:
                 raw_data = json.load(file)
 
+            if key:
+                if not isinstance(raw_data, dict):
+                    raise TypeError("A JSON key can only be selected from a dictionary payload.")
+
+                if key not in raw_data:
+                    raise KeyError(f"Key '{key}' was not found in JSON payload.")
+
+                raw_data = raw_data[key]
+
             data = pd.json_normalize(raw_data)
 
-        self.cache_manager = CacheManager(cache_dir = "Cache Data/Automated")
+        self.cache_manager = CacheManager(cache_dir = "Settings/Cache Data/Automated")
 
         super().__init__(data = data, *args, **kwargs)
 
@@ -85,10 +103,10 @@ class JsonFile(pd.DataFrame):
         """
         self.cache_manager.delete_column_cache(func_name, target_col)
 
-    
+
     def view(self) -> pd.DataFrame:
         """
-        Return the object as a standard pandas DataFrame for inspection and 
+        Return the object as a standard pandas DataFrame for inspection and
         rich display.
 
         Returns:
@@ -104,7 +122,7 @@ class JsonFile(pd.DataFrame):
                 search_dataframe.view().plot(kind='bar')
         ```
         """
-        
+
         return pd.DataFrame(self)
 
 
@@ -113,9 +131,9 @@ class JsonFile(pd.DataFrame):
         Drop all columns that contain a specific substring within their names.
 
         Args:
-            substring (str): The text to search for; any column containing this 
+            substring (str): The text to search for; any column containing this
                 string will be removed.
-            inplace (bool): If True, modifies the object directly and returns None. 
+            inplace (bool): If True, modifies the object directly and returns None.
                 Defaults to False.
 
         Returns:
@@ -137,16 +155,16 @@ class JsonFile(pd.DataFrame):
 
         if not columns_to_drop:
             return self if not inplace else None
-        
+
         return self.drop(columns = columns_to_drop, inplace = inplace)
-    
+
 
     def drop_CLASS_columns(self, inplace: bool = False) -> (Self | None):
         """
         Drop all columns that contain the substring "__CLASS__" from the data.
 
         Args:
-            inplace (bool): If True, modifies the object directly and returns None. 
+            inplace (bool): If True, modifies the object directly and returns None.
                 Defaults to False.
 
         Returns:
@@ -170,11 +188,11 @@ class JsonFile(pd.DataFrame):
     def rename_by_substring(self, old_substring: str, new_substring: str, inplace: bool = False) -> (Self | None):
         """
         Rename columns by replacing a specific substring with a new one.
-        
+
         Args:
             old_substring (str): The text to search for within the column names.
             new_substring (str): The text to replace the old substring with.
-            inplace (bool): If True, modifies the object directly and returns None. 
+            inplace (bool): If True, modifies the object directly and returns None.
                 Defaults to False.
 
         Returns:
@@ -189,7 +207,7 @@ class JsonFile(pd.DataFrame):
 
             Usage:
                 df.rename_by_substring("display_name", "name")
-        ```     
+        ```
         """
 
         columns_to_rename = {
@@ -200,18 +218,18 @@ class JsonFile(pd.DataFrame):
 
         if not columns_to_rename:
             return self if not inplace else None
-        
+
         return self.rename(columns = columns_to_rename, inplace = inplace)
-    
+
 
     def rename_all_DOTS(self, unified_separator: str = "_", inplace: bool = False) -> (Self | None):
         """
         Rename columns by replacing all occurrences of dots ('.') with a unified separator.
 
         Args:
-            unified_separator (str): The new string to replace dots with. 
+            unified_separator (str): The new string to replace dots with.
                 Defaults to "_".
-            inplace (bool): If True, modifies the object directly and returns None. 
+            inplace (bool): If True, modifies the object directly and returns None.
                 Defaults to False.
 
         Returns:
@@ -235,13 +253,13 @@ class JsonFile(pd.DataFrame):
     def reorder_columns(self, *first_cols, inplace: bool = False) -> (Self | None):
         """
         Reorder the dataframe by moving a specified list of columns to the front.
-        
-        Any columns not mentioned in `first_cols` will be appended to the end 
+
+        Any columns not mentioned in `first_cols` will be appended to the end
         preserving their original relative order.
 
         Args:
             first_cols (tuple): A list of column names that should appear first.
-            inplace (bool): If True, modifies the object directly and returns None. 
+            inplace (bool): If True, modifies the object directly and returns None.
                 Defaults to False.
 
         Returns:
@@ -250,7 +268,7 @@ class JsonFile(pd.DataFrame):
         Example:
         ```
             Initial Columns: ['C', 'A', 'D', 'B']
-            
+
             Operation: reorder_columns(first_cols=['A', 'B'])
             Result:    ['A', 'B', 'C', 'D']
 
@@ -258,12 +276,12 @@ class JsonFile(pd.DataFrame):
                 df.reorder_columns(["id", "timestamp"], inplace=True)
         ```
         """
-        
+
         ordered = [col for col in first_cols if col in self.columns]
-        
+
         if not ordered:
             return self if not inplace else None
-        
+
         final_order = ordered + [col for col in self.columns if col not in ordered]
 
         if inplace:
@@ -272,7 +290,7 @@ class JsonFile(pd.DataFrame):
                 self.insert(i, col, col_data)
 
             return None
-            
+
         else:
             return self[final_order]
 
@@ -284,9 +302,9 @@ class JsonFile(pd.DataFrame):
         Args:
             col_to_move (str): The name of the column you want to relocate.
             col_target (str): The reference column where the move will happen.
-            position (str): Whether to place the column "after" or "before" the 
+            position (str): Whether to place the column "after" or "before" the
                 target column. Defaults to "after".
-            inplace (bool): If True, modifies the object directly and returns None. 
+            inplace (bool): If True, modifies the object directly and returns None.
                 Defaults to False.
 
         Returns:
@@ -298,7 +316,7 @@ class JsonFile(pd.DataFrame):
         Example:
         ```
             Initial Columns: ['A', 'B', 'C', 'D']
-            
+
             Operation: move_column(col_to_move='A', col_target='C', position='after')
             Result:    ['B', 'C', 'A', 'D']
 
@@ -306,10 +324,10 @@ class JsonFile(pd.DataFrame):
                 df.move_column("user_id", "user_name", position="before")
         ```
         """
-        
+
         if col_to_move not in self.columns or col_target not in self.columns:
             return self if not inplace else None
-            
+
         if position not in ["after", "before"]:
             raise ValueError("position parameter must be 'after' or 'before'")
 
@@ -318,33 +336,33 @@ class JsonFile(pd.DataFrame):
             target_index = self.columns.get_loc(col_target)
 
             insert_index = target_index + 1 if position == "after" else target_index
-            
+
             self.insert(insert_index, col_to_move, col_data)
             return None
-            
+
         else:
             cols = self.columns.to_list()
             cols.remove(col_to_move)
             target_index = cols.index(col_target)
-            
+
             insert_index = target_index + 1 if position == "after" else target_index
-            
+
             cols.insert(insert_index, col_to_move)
             return self[cols]
-        
-        
+
+
     def align_lat_lng(self, inplace: bool = False) -> (Self | None):
         """
-        Standardize the coordinate order by moving the 'longitude' column 
+        Standardize the coordinate order by moving the 'longitude' column
         immediately after the 'latitude' column.
 
         .. note::
-        This method strictly expects the column names to be exactly **'latitude'** 
-        and **'longitude'** (case-sensitive). If the columns are named differently 
+        This method strictly expects the column names to be exactly **'latitude'**
+        and **'longitude'** (case-sensitive). If the columns are named differently
         (e.g., 'lat' or 'LONG'), the alignment will not occur.
 
         Args:
-            inplace (bool): If True, modifies the object directly and returns None. 
+            inplace (bool): If True, modifies the object directly and returns None.
                 Defaults to False.
 
         Returns:
@@ -359,9 +377,9 @@ class JsonFile(pd.DataFrame):
                 df.align_lat_lng(inplace=True)
         ```
         """
-        
+
         return self.move_column(col_to_move = "longitude", col_target = "latitude", position = "after", inplace = inplace)
-    
+
 
     def extract_keywords(
             self,
@@ -372,20 +390,20 @@ class JsonFile(pd.DataFrame):
     ) -> (Self | None):
         """
         Search for keywords across source columns and extract them into new target columns.
-        Matches are case-insensitive and are formatted to Title Case in the target column. 
+        Matches are case-insensitive and are formatted to Title Case in the target column.
 
         Notes:
             - **Keyword Priority**: Keywords are extracted based on list order. The first item in the list has the highest precedence.
             - **Non-Destructive Updates**: If this method is called multiple times targeting the exact same output column.
                 Subsequent calls will only populate empty cells (NaNs) and will NEVER overwrite previously extracted values.
-        
+
         Args:
             *source_cols: Variable number of column names to search within.
-            inplace (bool): If True, modifies the object directly and returns None. 
+            inplace (bool): If True, modifies the object directly and returns None.
                 Defaults to False.
-            remove_extracted (bool): If True, removes the matched keywords from the 
+            remove_extracted (bool): If True, removes the matched keywords from the
                 original source columns to clean the text. Defaults to False.
-            **target_cols_and_keywords: Keyword arguments where the key is the new 
+            **target_cols_and_keywords: Keyword arguments where the key is the new
                 column name and the value is a list of strings to search for.
 
         Returns:
@@ -393,10 +411,10 @@ class JsonFile(pd.DataFrame):
 
         Example:
         ```
-            Initial Column: 
+            Initial Column:
                 'description': ["Blue Suede Shoes", "Red Cotton Shirt"]
 
-            Operation: 
+            Operation:
                 extract_keywords('description', colors=['blue', 'red'], remove_extracted=True)
 
             Result:
@@ -407,17 +425,17 @@ class JsonFile(pd.DataFrame):
                 df.extract_keywords("comments", "tags", categories=["urgent", "review"], inplace=True)
         ```
         """
-    
+
         sources = list(source_cols)
         valid_sources = [col for col in sources if col in self.columns]
-        
+
         if not valid_sources:
             return self if not inplace else None
 
         combined_text = self[valid_sources].fillna('').agg(' '.join, axis = 1)
-        
+
         result = self.copy() if not inplace else self
-        
+
         for new_col_name, keywords_list in target_cols_and_keywords.items():
             extracted = pd.Series(index = combined_text.index, dtype = str)
 
@@ -436,13 +454,13 @@ class JsonFile(pd.DataFrame):
             if remove_extracted:
                 for col in valid_sources:
                     mask = result[col].notna()
-                    
+
                     result.loc[mask, col] = result.loc[mask, col].str.replace(rf"(?i)\b({'|'.join(keywords_list)})\b", '', regex = True)
-                    
+
                     result.loc[mask, col] = result.loc[mask, col].str.replace(r'\s+', ' ', regex = True).str.strip()
-        
+
         return None if inplace else result
-            
+
 
     def split_list_objects(
             self,
@@ -456,35 +474,35 @@ class JsonFile(pd.DataFrame):
         """
         Extract specific elements from lists stored within a column into new columns.
 
-        This method allows you to pull items out of list-like objects by their index. 
-        It can either join multiple indices into a string, explode them into parallel 
+        This method allows you to pull items out of list-like objects by their index.
+        It can either join multiple indices into a string, explode them into parallel
         separate rows, or perform a sequential cartesian product explosion.
 
         Notes:
-            - **Inplace Restriction**: 
-              Using `inplace=True` alongside `explode_rows=True` will fail to modify the original 
-              dataframe's shape due to pandas memory reallocation. 
+            - **Inplace Restriction**:
+              Using `inplace=True` alongside `explode_rows=True` will fail to modify the original
+              dataframe's shape due to pandas memory reallocation.
               Always use `inplace=False` and reassign when exploding.
-            - **String Joining**: When providing a list of indices with 
-              `explode_rows=False`, valid extracted elements are joined 
+            - **String Joining**: When providing a list of indices with
+              `explode_rows=False`, valid extracted elements are joined
               into a single comma-separated string (NaNs are ignored).
-            - **Cartesian vs. Parallel Explode**: When exploding multiple columns, 
-              `cartesian_explode=False` (default) explodes them in parallel (requires 
-              lists to be of equal length). `cartesian_explode=True` explodes them 
+            - **Cartesian vs. Parallel Explode**: When exploding multiple columns,
+              `cartesian_explode=False` (default) explodes them in parallel (requires
+              lists to be of equal length). `cartesian_explode=True` explodes them
               sequentially, creating a cross-join (cartesian product) of all elements.
 
         Args:
             source_col (str): The name of the column containing list-like objects.
-            remove_source_col (bool): If True, deletes the original source column after 
+            remove_source_col (bool): If True, deletes the original source column after
                 extraction. Defaults to False.
-            explode_rows (bool): If True, and an index list is provided, expands the 
+            explode_rows (bool): If True, and an index list is provided, expands the
                 dataframe so each extracted element gets its own row. Defaults to False.
-            cartesian_explode (bool): If True and multiple target columns are exploded, 
+            cartesian_explode (bool): If True and multiple target columns are exploded,
                 performs a sequential explode resulting in a cartesian product. Defaults to False.
-            inplace (bool): If True, modifies the object directly and returns None. 
+            inplace (bool): If True, modifies the object directly and returns None.
                 Defaults to False.
-            **target_cols_and_indices: Keyword arguments where the key is the new 
-                column name and the value is the index (int) or list of indices (list) 
+            **target_cols_and_indices: Keyword arguments where the key is the new
+                column name and the value is the index (int) or list of indices (list)
                 to extract from the source list.
 
         Returns:
@@ -492,10 +510,10 @@ class JsonFile(pd.DataFrame):
 
         Example:
         ```
-            Initial Data: 
+            Initial Data:
                 'data_list': [['A', 'B', 'C'], ['X', 'Y']]
 
-            Operation: 
+            Operation:
                 split_list_objects('data_list', first_val=0, second_val=1)
 
             Result:
@@ -525,20 +543,20 @@ class JsonFile(pd.DataFrame):
 
         elif target_cols_and_indices:
             cols_to_explode = []
-            
+
             for col, index in target_cols_and_indices.items():
                 if index is None or index == 'all':
                     result[col] = result[source_col]
 
                     if explode_rows:
                         cols_to_explode.append(col)
-                
+
                 elif isinstance(index, list):
                     extracted_parts = [result[source_col].str[i] for i in index]
 
                     if explode_rows:
                         result[col] = [[item for item in row if pd.notna(item)] for row in zip(*extracted_parts)]
-                        
+
                         cols_to_explode.append(col)
 
                     else:
@@ -546,7 +564,7 @@ class JsonFile(pd.DataFrame):
                             ', '.join([str(item) for item in row if pd.notna(item) and str(item).strip() != ''])
                             for row in zip(*extracted_parts)
                         ]
-                
+
                 else:
                     result[col] = result[source_col].str[index]
 
@@ -560,10 +578,10 @@ class JsonFile(pd.DataFrame):
 
         if remove_source_col:
             result.drop(columns = [source_col], inplace = True)
-        
+
         return None if inplace else result
-        
-    
+
+
     def impute_by_language(
             self,
             reference_col: str,
@@ -572,7 +590,7 @@ class JsonFile(pd.DataFrame):
             inplace: bool = False
     ) -> (Self | None):
         """
-        Impute missing or inconsistent values in target columns based on a reference column 
+        Impute missing or inconsistent values in target columns based on a reference column
         and a preferred language.
 
         Notes:
@@ -589,7 +607,7 @@ class JsonFile(pd.DataFrame):
             reference_col (str): The column used as a key (e.g., 'category_slug').
             *target_cols: One or more columns to be updated/imputed (e.g., 'category_name').
             target_lang (str): The ISO 639-1 language code to prefer. Defaults to 'en'.
-            inplace (bool): If True, modifies the object directly and returns None. 
+            inplace (bool): If True, modifies the object directly and returns None.
                 Defaults to False.
 
         Returns:
@@ -611,13 +629,13 @@ class JsonFile(pd.DataFrame):
                 df.impute_by_language("city_id", "city_name", target_lang="ar")
         ```
         """
-        DetectorFactory.seed = 0 
+        DetectorFactory.seed = 0
 
         if reference_col not in self.columns:
             return self if not inplace else None
 
         result = self.copy() if not inplace else self
-        
+
         target_cols = list(target_cols)
 
         for col in target_cols:
@@ -625,7 +643,7 @@ class JsonFile(pd.DataFrame):
                 continue
 
             unique_pairs = result[[reference_col, col]].dropna().drop_duplicates()
-            
+
             mapping_dict = {}
             for ref, val in zip(unique_pairs[reference_col], unique_pairs[col]):
                 if ref in mapping_dict:
@@ -633,11 +651,11 @@ class JsonFile(pd.DataFrame):
 
                 text = str(val).strip()
                 ref_clean = str(ref).replace('-', ' ').lower()
-                
+
                 if text.lower() == ref_clean:
                     mapping_dict[ref] = val
                     continue
-            
+
             for ref, val in zip(unique_pairs[reference_col], unique_pairs[col]):
                 if ref in mapping_dict:
                     continue
@@ -657,11 +675,11 @@ class JsonFile(pd.DataFrame):
             for ref in all_unique_refs:
                 if ref not in mapping_dict:
                     mapping_dict[ref] = str(ref).replace('-', ' ').title()
-            
+
             result[col] = result[reference_col].map(mapping_dict).fillna(result[col])
 
         return None if inplace else result
-    
+
 
     def translate_conditional_column(
         self,
@@ -678,9 +696,9 @@ class JsonFile(pd.DataFrame):
         """
         Conditionally translate values in a target column based on language detection of a sample.
 
-        This method groups data by `partition_col`, samples text from `detect_col` to determine 
-        if the language matches `target_lang`. If the percentage of matches is below the 
-        `threshold`, the unique values in `target_col` for that partition are translated. 
+        This method groups data by `partition_col`, samples text from `detect_col` to determine
+        if the language matches `target_lang`. If the percentage of matches is below the
+        `threshold`, the unique values in `target_col` for that partition are translated.
         Results are cached to minimize API calls.
 
         Args:
@@ -689,7 +707,7 @@ class JsonFile(pd.DataFrame):
             target_col (str): The column containing the values that need translation.
             target_lang (str): The ISO language code to check for and translate into. Defaults to 'en'.
             sample_size (int): Number of rows to sample from each partition for detection. Defaults to 10.
-            threshold (float): The required ratio (0.0 to 1.0) of `target_lang` matches to skip translation. 
+            threshold (float): The required ratio (0.0 to 1.0) of `target_lang` matches to skip translation.
                 Defaults to 0.5.
             inplace (bool): If True, modifies the object directly and returns None. Defaults to False.
 
@@ -702,13 +720,13 @@ class JsonFile(pd.DataFrame):
         Example:
         ```
             Scenario:
-                Translate 'category_name' only for groups where the 'description' 
+                Translate 'category_name' only for groups where the 'description'
                 is not primarily in English.
 
             Usage:
                 df.translate_conditional_column(
-                    partition_col="group_id", 
-                    detect_col="description", 
+                    partition_col="group_id",
+                    detect_col="description",
                     target_col="category_name",
                     target_lang="en",
                     threshold=0.7
@@ -718,7 +736,7 @@ class JsonFile(pd.DataFrame):
 
         if not (0.0 <= threshold <= 1.0):
             raise ValueError("The 'threshold' parameter must be a float between 0.0 and 1.0")
-        
+
         required_cols = [partition_col, detect_col, target_col]
 
         if not all(col in self.columns for col in required_cols):
@@ -731,7 +749,7 @@ class JsonFile(pd.DataFrame):
 
         for partition in unique_partitions:
             available_texts = result[result[partition_col] == partition][detect_col].dropna().drop_duplicates()
-        
+
             if available_texts.empty:
                 continue
 
@@ -742,14 +760,14 @@ class JsonFile(pd.DataFrame):
                 sample_texts = available_texts.sample(n = actual_sample_size)
 
                 combined_text = " . ".join(sample_texts.astype(str).tolist())
-                
+
                 try:
                     if detect(str(combined_text)) == target_lang:
                         lang_match_count += 1
 
                 except:
                     pass
-            
+
             if lang_match_count >= (number_of_samples * threshold):
                 safe_partitions.append(partition)
 
@@ -782,13 +800,13 @@ class JsonFile(pd.DataFrame):
                     current_cache[val] = translated
 
                     cache_updated = True
-                    
-                    time.sleep(0.2) 
+
+                    time.sleep(0.2)
 
                     if (i + 1) % save_every == 0:
                         self.cache_manager.save_function_cache(func_name)
                         print(f"Checkpoint: Safely saved {i + 1} / {num_of_values} translations to cache...")
-                
+
                 except Exception as e:
                     print(f"Failed to translate: '{val}'. Skipping cache for this item. Error: {e}.")
                     continue
@@ -802,26 +820,26 @@ class JsonFile(pd.DataFrame):
         result[target_col] = result[target_col].astype(str).str.title()
 
         return None if inplace else result
-    
+
 
     def translate_categorical_column(
-            self, 
-            target_col: str, 
-            target_lang: str = 'en', 
+            self,
+            target_col: str,
+            target_lang: str = 'en',
             inplace: bool = False
     ) -> (Self | None):
         """
         Translate all unique categories in a specific column using an automated translator.
- 
-        This method optimizes performance and API usage by translating only unique 
-        values (categories) and utilizing a caching mechanism to avoid re-translating 
+
+        This method optimizes performance and API usage by translating only unique
+        values (categories) and utilizing a caching mechanism to avoid re-translating
         previously processed strings.
 
         Args:
             target_col (str): The name of the column containing categorical text to translate.
-            target_lang (str): The ISO language code for the target language. 
+            target_lang (str): The ISO language code for the target language.
                 Defaults to 'en'.
-            inplace (bool): If True, modifies the object directly and returns None. 
+            inplace (bool): If True, modifies the object directly and returns None.
                 Defaults to False.
 
         Returns:
@@ -829,10 +847,10 @@ class JsonFile(pd.DataFrame):
 
         Example:
         ```
-            Initial Column: 
+            Initial Column:
                 'status': ["مكتمل", "قيد الانتظار", "مكتمل"]
 
-            Operation: 
+            Operation:
                 translate_categorical_column(target_col='status', target_lang='en')
 
             Result:
@@ -842,17 +860,17 @@ class JsonFile(pd.DataFrame):
                 df.translate_categorical_column("product_category", target_lang="fr")
         ```
         """
-        
+
         if target_col not in self.columns:
             return self if not inplace else None
 
         result = self.copy() if not inplace else self
-        
+
         unique_values = result[target_col].dropna().unique()
-        
+
         if len(unique_values) == 0:
             return None if inplace else result
-        
+
         func_name = "translate_categorical_column"
 
         current_cache = self.cache_manager.get_column_cache(func_name, target_col)
@@ -870,9 +888,9 @@ class JsonFile(pd.DataFrame):
                     current_cache[val] = translated
 
                     cache_updated = True
-                
+
                     time.sleep(0.2)
-                
+
                 except Exception as e:
                     print(f"Failed to translate: {val}. Skipping cache for this item. Error: {e}.")
 
@@ -882,17 +900,17 @@ class JsonFile(pd.DataFrame):
                 self.cache_manager.save_function_cache(func_name)
 
         result[target_col] = result[target_col].map(current_cache).fillna(result[target_col])
-        
+
         return None if inplace else result
-    
+
     def truncate_after_substring(self, inplace: bool = False, regex: bool = True, **target_cols_and_substrings) -> (Self | None):
         """
         Removes specific substrings and everything following them from target columns.
-        
+
         Args:
-            inplace (bool): If True, modifies the object directly and returns None. 
+            inplace (bool): If True, modifies the object directly and returns None.
                 Defaults to False.
-            **target_cols_and_substrings: Keyword arguments where the key is the column 
+            **target_cols_and_substrings: Keyword arguments where the key is the column
                 name and the value is a string or a list of strings at which to cut off the text.
 
         Returns:
@@ -906,7 +924,7 @@ class JsonFile(pd.DataFrame):
 
             Operation:
                 df.truncate_after_substring(
-                    title=['-', '('], 
+                    title=['-', '('],
                     company=','
                 )
 
@@ -915,24 +933,24 @@ class JsonFile(pd.DataFrame):
                 'company': ['Tech Corp', 'Data Inc']
         ```
         """
-        
+
         if not target_cols_and_substrings:
             return self if not inplace else None
 
         result = self.copy() if not inplace else self
-        
+
         for col, substrings in target_cols_and_substrings.items():
             if col not in result.columns:
                 continue
-            
+
             if not isinstance(substrings, list):
                 substrings = [substrings]
-                
+
             for sub in substrings:
                 result[col] = result[col].str.split(sub, n = 1, regex = regex).str[0].str.strip()
-                
+
         return None if inplace else result
-    
+
 
     def fill_missing_coordinates(
         self,
@@ -990,9 +1008,9 @@ class JsonFile(pd.DataFrame):
 
             col_lower = col_str.str.lower()
             mask_valid_col = (
-                result[col].notna() & 
-                (col_str != "") & 
-                (col_lower != "nan") & 
+                result[col].notna() &
+                (col_str != "") &
+                (col_lower != "nan") &
                 (col_lower != "none") &
                 (~col_str.str.isnumeric())
             )
@@ -1004,7 +1022,7 @@ class JsonFile(pd.DataFrame):
 
             append_mask = update_mask & (result[temp_query_col] != "") & (~empty_mask)
             result.loc[append_mask, temp_query_col] += ", " + col_str[append_mask]
-            
+
         result.loc[result[temp_query_col] == "", temp_query_col] = None
 
         unique_queries = result.loc[mask_missing, temp_query_col].dropna().unique()
@@ -1015,7 +1033,7 @@ class JsonFile(pd.DataFrame):
 
         func_name = "fill_missing_coordinates"
         current_cache = self.cache_manager.get_column_cache(func_name, "geocode_queries")
-        
+
         queries_to_fetch = [q for q in unique_queries if q not in current_cache]
 
         if queries_to_fetch:
@@ -1023,7 +1041,7 @@ class JsonFile(pd.DataFrame):
 
             num_of_queries = len(queries_to_fetch)
             print(f"preparing {num_of_queries} locations to be geocoded...")
-            
+
             geolocator = Nominatim(user_agent = "jsonfile_geocoding_pipeline")
             geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1)
 
@@ -1031,7 +1049,7 @@ class JsonFile(pd.DataFrame):
                 try:
                     current_search = query
                     location = None
-                    
+
                     while current_search:
                         location = geocode(current_search)
 
@@ -1045,7 +1063,7 @@ class JsonFile(pd.DataFrame):
 
                     if location:
                         current_cache[query] = (location.latitude, location.longitude)
-                        
+
                         cache_updated = True
 
                     else:
@@ -1055,7 +1073,7 @@ class JsonFile(pd.DataFrame):
                     if (i + 1) % save_every == 0:
                         self.cache_manager.save_function_cache(func_name)
                         print(f"Checkpoint: Safely saved {i + 1} / {num_of_queries} locations to cache...")
-                        
+
                 except Exception as e:
                     print(f"Failed to geocode: '{query}'. Skipping cache for this item. Error: {e}.")
                     continue
@@ -1066,11 +1084,11 @@ class JsonFile(pd.DataFrame):
             print("All geocoding completed and safely cached!")
 
         mapped_coords = result[temp_query_col].map(current_cache)
-        
+
         valid_mapped = mapped_coords.notna()
         lat_update_mask = result[lat_col].isna() & valid_mapped
         long_update_mask = result[long_col].isna() & valid_mapped
-        
+
         if lat_update_mask.any():
             result.loc[lat_update_mask, lat_col] = mapped_coords[lat_update_mask].str[0]
 
@@ -1121,33 +1139,40 @@ class JsonFile(pd.DataFrame):
         required_cols = [country_col, year_col]
         if not all(col in self.columns for col in required_cols):
             print(f"Warning: Missing required columns: {required_cols}. Skipping conversion.")
-            
+
             return self if not inplace else None
-        
+
         result = self.copy() if not inplace else self
 
         valid_cols = [col for col in target_cols if col in result.columns]
         if not valid_cols:
             print("Warning: No valid target columns found.")
-            
+
             return None if inplace else result
-        
+
+        if result.empty:
+            return None if inplace else result
+
         func_name = "convert_to_usd"
-        
+
         currency_cache = self.cache_manager.get_column_cache(func_name, "currency_codes")
         rates_cache = self.cache_manager.get_column_cache(func_name, "exchange_rates")
-        
+
         cache_updated = False
 
         unique_pairs = result[[country_col, year_col]].drop_duplicates().dropna()
-        
-        min_year_limit = int(result[year_col].min())
+
+        valid_years = pd.to_numeric(result[year_col], errors = 'coerce').dropna()
+        if valid_years.empty or unique_pairs.empty:
+            return None if inplace else result
+
+        min_year_limit = int(valid_years.min())
 
         rates_mapping = {}
-        
+
         for orig_c, orig_y in zip(unique_pairs[country_col], unique_pairs[year_col]):
             c_name = str(orig_c).strip()
-            
+
             curr_code = currency_cache.get(c_name)
             if not curr_code and c_name not in currency_cache:
                 try:
@@ -1160,61 +1185,66 @@ class JsonFile(pd.DataFrame):
                     if currencies:
                         curr_code = currencies[0]
                         currency_cache[c_name] = curr_code
-                        
+
                         cache_updated = True
                     else:
                         curr_code = None
-                
+
                 except:
                     curr_code = None
-                
-            
+
+
             rate = None
-            
+
             if curr_code:
                 if curr_code.upper() == 'USD':
                     rate = 1.0
-                
+
                 else:
-                    current_lookback_year = int(orig_y)
+                    try:
+                        current_lookback_year = int(float(orig_y))
+                    except (TypeError, ValueError):
+                        rates_mapping[(orig_c, orig_y)] = None
+                        continue
+
                     while current_lookback_year >= min_year_limit:
                         y_str = str(current_lookback_year)
 
                         rate_key = f"{curr_code}_{y_str}"
                         rate = rates_cache.get(rate_key)
-                        
+
                         if rate:
                             break
 
                         try:
                             print(f"Fetching rate for {curr_code} in {y_str}...")
-                            
+
                             ticker = yf.Ticker(f"{curr_code}=X")
                             hist = ticker.history(start = f"{y_str}-01-01", end = f"{y_str}-12-31")
-                            
+
                             if not hist.empty:
                                 rate = hist['Close'].mean()
                                 rates_cache[rate_key] = rate
-                        
+
                                 cache_updated = True
                                 break
-                        
+
                         except:
                             pass
 
-                        current_lookback_year -= 1    
-                            
+                        current_lookback_year -= 1
+
             rates_mapping[(orig_c, orig_y)] = rate
-            
+
         if cache_updated:
             self.cache_manager.save_function_cache(func_name)
-            
+
         rates_df = pd.Series(rates_mapping).reset_index()
         if not rates_df.empty:
             rates_df.columns = [country_col, year_col, '_conversion_rate']
-            
+
             temp_df = result.reset_index().merge(rates_df, on=[country_col, year_col], how = 'left').set_index('index')
-            
+
             for col in valid_cols:
                 col_name = f"{col}_usd" if new_cols else col
                 result[col_name] = result[col] / temp_df['_conversion_rate']
@@ -1254,7 +1284,7 @@ class JsonFile(pd.DataFrame):
             Self | None: The cleaned dataframe when `inplace=False`, otherwise
             None.
         """
-        
+
         if not hierarchy_cols:
             print("Warning: No hierarchy columns provided.")
             return self if not inplace else None
@@ -1264,36 +1294,36 @@ class JsonFile(pd.DataFrame):
         for target_col in target_cols:
             if target_col not in result.columns:
                 continue
-            
+
             processed_mask = pd.Series(False, index = result.index)
             col_outliers_count = 0
-            
+
             current_hierarchy = hierarchy_cols.copy()
             level = 1
-            
+
             while current_hierarchy:
                 group_name = " + ".join(current_hierarchy)
                 unprocessed_mask = (~processed_mask) & result[target_col].notna()
-                
+
                 if unprocessed_mask.sum() == 0:
                     break
-                
+
                 grouped = result.groupby(current_hierarchy, dropna = False)[target_col]
-                
+
                 group_sizes = grouped.transform('count')
                 valid_group_mask = group_sizes >= min_samples
 
                 valid_data = result[valid_group_mask]
-                
+
                 if not valid_data.empty:
                     valid_grouped = valid_data.groupby(current_hierarchy, dropna = False)[target_col]
 
                     q1 = valid_grouped.quantile(0.25).rename('q1')
                     q3 = valid_grouped.quantile(0.75).rename('q3')
-                    
+
                     bounds = pd.concat([q1, q3], axis = 1).reset_index()
                     iqr = bounds['q3'] - bounds['q1']
-        
+
                     bounds['lower_bound'] = bounds['q1'] - 1.5 * iqr
                     bounds['upper_bound'] = bounds['q3'] + 1.5 * iqr
 
@@ -1302,11 +1332,11 @@ class JsonFile(pd.DataFrame):
                             on = current_hierarchy,
                             how = 'left'
                         ).set_index('index')
-                    
+
                     is_outlier = (
-                        valid_group_mask & unprocessed_mask & 
-                        merged_df['lower_bound'].notna() & 
-                        ((result[target_col] < merged_df['lower_bound']) | 
+                        valid_group_mask & unprocessed_mask &
+                        merged_df['lower_bound'].notna() &
+                        ((result[target_col] < merged_df['lower_bound']) |
                         (result[target_col] > merged_df['upper_bound']))
                     )
 
@@ -1315,14 +1345,14 @@ class JsonFile(pd.DataFrame):
 
                     if new_outliers_count > 0:
                         result.loc[is_outlier, target_col] = np.nan
-                
+
                 processed_mask = processed_mask | valid_group_mask
-                
+
                 current_hierarchy.pop()
                 level += 1
 
         return None if inplace else result
-    
+
 
     def drop_outliers(
         self,
@@ -1352,7 +1382,7 @@ class JsonFile(pd.DataFrame):
             Self | None: The filtered dataframe when `inplace=False`, otherwise
             None.
         """
-        
+
         if not hierarchy_cols:
             print("Warning: No hierarchy columns provided.")
             return self if not inplace else None
@@ -1363,32 +1393,32 @@ class JsonFile(pd.DataFrame):
         for target_col in target_cols:
             if target_col not in result.columns:
                 continue
-            
+
             processed_mask = pd.Series(False, index = result.index)
             col_outliers_count = 0
-            
+
             current_hierarchy = hierarchy_cols.copy()
             level = 1
-            
+
             while current_hierarchy:
                 unprocessed_mask = (~processed_mask) & result[target_col].notna()
-                
+
                 if unprocessed_mask.sum() == 0:
                     break
-                
+
                 grouped = result.groupby(current_hierarchy, dropna = False)[target_col]
-                
+
                 group_sizes = grouped.transform('count')
                 valid_group_mask = group_sizes >= min_samples
-                
+
                 valid_data = result[valid_group_mask]
-                
+
                 if not valid_data.empty:
                     valid_grouped = valid_data.groupby(current_hierarchy, dropna = False)[target_col]
-                    
+
                     q1 = valid_grouped.quantile(0.25).rename('q1')
                     q3 = valid_grouped.quantile(0.75).rename('q3')
-                    
+
                     bounds = pd.concat([q1, q3], axis = 1).reset_index()
                     iqr = bounds['q3'] - bounds['q1']
                     bounds['lower_bound'] = bounds['q1'] - 1.5 * iqr
@@ -1399,11 +1429,11 @@ class JsonFile(pd.DataFrame):
                             on = current_hierarchy,
                             how = 'left'
                         ).set_index('index')
-                    
+
                     is_outlier = (
-                        valid_group_mask & unprocessed_mask & 
-                        merged_df['lower_bound'].notna() & 
-                        ((result[target_col] < merged_df['lower_bound']) | 
+                        valid_group_mask & unprocessed_mask &
+                        merged_df['lower_bound'].notna() &
+                        ((result[target_col] < merged_df['lower_bound']) |
                          (result[target_col] > merged_df['upper_bound']))
                     )
 
@@ -1412,13 +1442,13 @@ class JsonFile(pd.DataFrame):
 
                     if new_outliers_count > 0:
                         outliers_to_drop.update(result[is_outlier].index)
-                
+
                 processed_mask = processed_mask | valid_group_mask
-                
+
                 current_hierarchy.pop()
                 level += 1
 
-        if outliers_to_drop: 
+        if outliers_to_drop:
             result.drop(index = list(outliers_to_drop), inplace = True)
 
         return None if inplace else result
@@ -1465,7 +1495,7 @@ class JsonFile(pd.DataFrame):
         ```
         """
         result = self.copy() if not inplace else self
-        
+
         valid_cols = [col for col in target_cols if col in result.columns]
         if not valid_cols:
             print("Warning: No valid target columns found for imputation.")
@@ -1486,13 +1516,13 @@ class JsonFile(pd.DataFrame):
                 continue
 
             current_group = valid_group.copy()
-            
+
             while len(current_group) > 0 and result[col].isna().sum() > 0:
                 if strategy in ['median', 'mean']:
                     fill_vals = result.groupby(current_group, dropna = False)[col].transform(strategy)
-                    
+
                     result[col] = result[col].fillna(fill_vals)
-                
+
                 else:
                     counts = (
                         result[result[col].notna()]
@@ -1506,9 +1536,9 @@ class JsonFile(pd.DataFrame):
                         continue
 
                     counts = counts.sort_values(current_group + ['_count'], ascending = [True] * len(current_group) + [False])
-                    
+
                     modes_df = counts.drop_duplicates(subset = current_group).rename(columns = {col: '_mode_val'})
-                    
+
                     temp_df = result.reset_index().merge(modes_df[current_group + ['_mode_val']], on = current_group, how = 'left').set_index('index')
                     result[col] = result[col].fillna(temp_df['_mode_val'])
 
@@ -1517,7 +1547,382 @@ class JsonFile(pd.DataFrame):
         return None if inplace else result
 
 
-    def save_to_json(self, file_path: str, orient: str = 'records', force_ascii: bool = False, indent: int = 4) -> None:
+    def categorize_by_reference(
+        self,
+        *source_cols: str,
+        target_col: str,
+        reference: dict,
+        default_category: str = 'Other',
+        inplace: bool = False
+    ):
+        """
+        Categorize text data into broader groups based on a reference lexicon dictionary.
+
+        This method scans one or more source text columns for specific keywords defined in a
+        lexicon dictionary. If a match is found, the dictionary's key (the category)
+        is assigned to a new target column.
+
+        Notes:
+            - The search uses word boundaries (\b) to prevent partial word matches
+              (e.g., matching 'React' will not trigger on 'Reactor').
+            - The implementation builds an Aho-Corasick automaton and evaluates
+              each unique combined text once, then maps results back to all rows.
+            - Longer keywords take precedence over shorter ones (e.g., "Data Analyst"
+              matches before "Data").
+            - Empty keyword lists and blank keyword values are ignored safely.
+
+        Args:
+            *source_cols (str): Source columns containing the raw text to search.
+            target_col (str): The new or existing column where categories will be saved.
+            reference (dict): A dictionary where keys are category names and values
+                are lists of keywords to search for.
+            default_category (str): The fallback value if no keywords are matched.
+                Defaults to 'Other'.
+            inplace (bool): If True, modifies the object directly and returns None.
+                Defaults to False.
+
+        Returns:
+            The modified object (self) if `inplace` is False, otherwise None.
+
+        Example:
+        ```
+            reference = {
+                "Data": ["data analyst", "business intelligence"],
+                "Software": ["python developer", "backend engineer"]
+            }
+
+            jobs.categorize_by_reference(
+                "title",
+                "description",
+                target_col = "field_label",
+                reference = reference,
+                inplace = True
+            )
+        ```
+        """
+        sources = list(source_cols)
+        valid_sources = [col for col in sources if col in self.columns]
+
+        if not valid_sources:
+            return self if not inplace else None
+
+        result = self.copy() if not inplace else self
+
+        combined_series = result[valid_sources[0]].fillna('').astype(str)
+        
+        if len(valid_sources) > 1:
+            for col in valid_sources[1:]:
+                combined_series += " " + result[col].fillna('').astype(str)
+
+        if not isinstance(reference, dict) or not reference:
+            result[target_col] = default_category
+
+            return None if inplace else result
+
+        automaton = ahocorasick.Automaton()
+
+        category_priority = {cat: idx for idx, cat in enumerate(reversed(list(reference.keys())))}
+        valid_keyword_found = False
+
+        for category, keywords in reference.items():
+            if not isinstance(keywords, list):
+                keywords = [keywords]
+
+            for kw in keywords:
+                if kw is not None and str(kw).strip():
+                    clean_kw = str(kw).strip().lower()
+
+                    automaton.add_word(clean_kw, (len(clean_kw), category_priority[category], category))
+                    valid_keyword_found = True
+
+        if not valid_keyword_found:
+            result[target_col] = default_category
+
+            return None if inplace else result
+
+        automaton.make_automaton()
+
+        unique_texts = combined_series.unique()
+        mapping_dict = {}
+
+        for text in unique_texts:
+            if not text:
+                mapping_dict[text] = default_category
+                continue
+
+            text_lower = text.lower()
+            text_len = len(text_lower)
+
+            best_match = None
+            best_len = -1
+            best_priority = float('inf')
+
+            for end_index, (kw_len, priority, category) in automaton.iter(text_lower):
+                start_index = end_index - kw_len + 1
+
+                if start_index > 0 and text_lower[start_index - 1].isalnum():
+                    continue
+
+                if end_index + 1 < text_len and text_lower[end_index + 1].isalnum():
+                    continue
+
+                if kw_len > best_len or (kw_len == best_len and priority < best_priority):
+                    best_match = category
+                    best_len = kw_len
+                    best_priority = priority
+
+            mapping_dict[text] = best_match if best_match else default_category
+
+        result[target_col] = combined_series.map(mapping_dict)
+
+        return None if inplace else result
+
+
+    def extract_entities_nlp(
+        self,
+        *source_cols,
+        lexicon_source: str | dict,
+        save_every: int = 1000,
+        inplace: bool = False,
+        noisey_terms: set | None = None,
+        **target_cols_and_json_keys
+    ) -> (Self | None):
+        """
+        Extract entities from free text by matching against a cached lexicon with
+        spaCy tokenization and lemmatization.
+
+        Notes:
+            Terms are loaded from a JSON file or dictionary, grouped by target
+            output column, and matched across the combined source text. Results
+            are cached per unique text snippet so repeat runs avoid reprocessing
+            the same content.
+
+        Args:
+            *source_cols: Text columns whose combined content will be searched.
+            lexicon_source (str | dict): Path to a lexicon JSON file or a
+                preloaded dictionary with equivalent structure.
+            save_every (int): Cache checkpoint frequency during NLP processing.
+                Defaults to 1000.
+            inplace (bool): If True, modifies the object directly and returns
+                None. Defaults to False.
+            noisey_terms (set | None): Terms that should be ignored even if they
+                are matched. Defaults to None.
+            **target_cols_and_json_keys: Mapping where each key is an output
+                column name and each value is a lexicon key or list of keys to
+                collect terms from.
+
+        Returns:
+            Self | None: The dataframe with extracted entity-list columns when
+            `inplace=False`, otherwise None.
+
+        Example:
+        ```
+            search_dataframe.extract_entities_nlp(
+                "title",
+                "description",
+                lexicon_source="skills_lexicon.json",
+                basic_skills=["skills", "technologies"]
+            )
+        ```
+        """
+
+        if noisey_terms is None:
+            noisey_terms = set()
+
+        if not target_cols_and_json_keys:
+            print("Error: You must provide at least one target column and JSON key via kwargs.")
+
+            return None if inplace else self.copy()
+
+        if isinstance(lexicon_source, str):
+            try:
+                with open(lexicon_source, 'r', encoding = 'utf-8') as f:
+                    lexicon_data = json.load(f)
+
+            except Exception as e:
+                print(f"Error loading JSON file: {e}")
+
+                return None if inplace else self.copy()
+        else:
+            lexicon_data = lexicon_source
+
+        term_dict = {}
+
+        for target_col, json_key in target_cols_and_json_keys.items():
+            keys_to_match = json_key if isinstance(json_key, list) else [json_key]
+            extracted_terms = set()
+
+            stack = [(lexicon_data, False)]
+
+            while stack:
+                current_node, is_inside = stack.pop()
+
+                if isinstance(current_node, dict):
+                    for k, v in current_node.items():
+                        current_is_target = is_inside or (str(k) in keys_to_match)
+
+                        if current_is_target and isinstance(v, bool) and v is True:
+                            extracted_terms.add(str(k).strip().lower())
+
+                        elif current_is_target and isinstance(v, str):
+                            extracted_terms.add(str(v).strip().lower())
+
+                        elif isinstance(v, (dict, list)):
+                            stack.append((v, current_is_target))
+
+                elif isinstance(current_node, list):
+                    for item in current_node:
+                        if is_inside and isinstance(item, str):
+                            extracted_terms.add(str(item).strip().lower())
+
+                        elif isinstance(item, (dict, list)):
+                            stack.append((item, is_inside))
+
+            if extracted_terms:
+                term_dict[target_col] = list(extracted_terms)
+
+            else:
+                print(f"Warning: No data found for keys '{keys_to_match}'. Skipping '{target_col}'.")
+
+        if not term_dict:
+            print("Error: No valid terms extracted from any specified JSON keys.")
+
+            return None if inplace else self.copy()
+
+
+        valid_sources = [col for col in source_cols if col in self.columns]
+        if not valid_sources:
+            print("Warning: No valid source columns found.")
+
+            return None if inplace else self.copy()
+
+        result = self.copy() if not inplace else self
+        combined_series = result[valid_sources[0]].fillna('').astype(str)
+
+        for col in valid_sources[1:]:
+            combined_series += " " + result[col].fillna('').astype(str)
+
+        combined_text = combined_series.str.strip()
+        valid_mask = combined_text != ""
+        all_valid_texts = combined_text[valid_mask].unique().tolist()
+
+        if not all_valid_texts:
+            print("No valid text found in the specified columns.")
+            return None if inplace else result
+
+
+        func_name = "extract_entities_nlp"
+        caches = {}
+
+        for target_col in term_dict.keys():
+            cache_obj = self.cache_manager.get_column_cache(func_name, target_col)
+
+            caches[target_col] = cache_obj if isinstance(cache_obj, dict) else {}
+
+        texts_to_process = [
+            text for text in all_valid_texts
+            if any(text not in caches[col]
+            for col in term_dict.keys())
+        ]
+
+        if texts_to_process:
+            print(f"Loading NLP Model and building Multi-Label Matcher...")
+            nlp = spacy.load("en_core_web_sm")
+            matcher = Matcher(nlp.vocab)
+
+            for col_name, terms in term_dict.items():
+                all_patterns = []
+
+                for term_doc in nlp.pipe(terms, disable = ["parser", "ner"]):
+                    pattern_lemma = []
+                    pattern_lower = []
+
+                    for token in term_doc:
+                        pattern_lemma.append({"LEMMA": {"IN": [token.lemma_.lower(), token.lemma_.title()]}})
+
+                        pattern_lower.append({"LOWER": token.text.lower()})
+
+                    if pattern_lemma:
+                        all_patterns.append(pattern_lemma)
+
+                    if pattern_lower:
+                        all_patterns.append(pattern_lower)
+
+                matcher.add(col_name, all_patterns)
+
+            num_texts = len(texts_to_process)
+            print(f"Extracting smart entities from {num_texts} rows simultaneously...")
+
+            cache_updated = False
+
+            for i, doc in enumerate(nlp.pipe(texts_to_process, batch_size = 100)):
+                original_text = texts_to_process[i]
+                found_entities = {col: set() for col in term_dict.keys()}
+
+                try:
+                    matches = matcher(doc)
+
+                    for match_id, start, end in matches:
+                        col_name = nlp.vocab.strings[match_id]
+                        span = doc[start:end]
+                        clean_skill = " ".join([t.lemma_ for t in span]).title()
+
+                        is_valid = True
+
+                        if len(clean_skill) == 1:
+                            if not span.text.isupper() or not span[0].is_alpha:
+                                is_valid = False
+
+                        if len(span) == 1 and is_valid:
+                            invalid_pos = {"VERB", "ADV", "PRON", "DET", "ADP", "CCONJ", "SCONJ", "AUX", "SYM", "PUNCT"}
+
+                            if span[0].pos_ in invalid_pos:
+                                is_valid = False
+
+                        if clean_skill.lower() in noisey_terms:
+                            is_valid = False
+
+                        if is_valid:
+                            found_entities[col_name].add(clean_skill)
+
+                    for col in term_dict.keys():
+                        caches[col][original_text] = list(found_entities[col])
+
+                    cache_updated = True
+
+                except Exception as e:
+                    print(f"Error processing text snippet: {e}")
+
+                if (i + 1) % save_every == 0 and cache_updated:
+                    for col in term_dict.keys():
+                        self.cache_manager.save_function_cache(func_name)
+
+                    print(f"Checkpoint: Safely saved {i + 1} / {num_texts}...")
+
+                    cache_updated = False
+
+            if cache_updated:
+                for col in term_dict.keys():
+                    self.cache_manager.save_function_cache(func_name)
+
+                print("All NLP extraction completed and safely cached!")
+        else:
+            print("All requested data is already cached. No NLP processing needed.")
+
+        for col in term_dict.keys():
+            result[col] = [caches[col].get(text, []) for text in combined_text]
+
+        return None if inplace else result
+
+
+    def save_to_json(
+            self,
+            file_path: str,
+            orient: str = 'records',
+            append: bool = False,
+            force_ascii: bool = False,
+            indent: int = 4
+        ) -> None:
         """
         Save the dataframe to a JSON file only when content has changed.
 
@@ -1532,6 +1937,9 @@ class JsonFile(pd.DataFrame):
             file_path (str): Destination JSON file path.
             orient (str): JSON orientation passed to `pandas.DataFrame.to_json`.
                 Defaults to `"records"`.
+            append (bool): If True and the target file exists, appends current
+                rows to the existing JSON data and removes duplicate rows before
+                writing. Defaults to False.
             force_ascii (bool): Whether to escape non-ASCII characters in the
                 output. Defaults to False.
             indent (int): Indentation width used when writing to disk. Defaults
@@ -1542,34 +1950,60 @@ class JsonFile(pd.DataFrame):
         """
         export_df = self.copy()
 
-        for col in export_df.select_dtypes(include=['datetime', 'datetimetz']).columns:
-                export_df[col] = export_df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+        for col in export_df.select_dtypes(include = ['datetime', 'datetimetz']).columns:
+            export_df[col] = export_df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
 
-        json_str = export_df.to_json(orient = orient, force_ascii = force_ascii)
-        current_data = json.loads(json_str)
+        is_append_successful = False
+        new_rows_count = len(export_df)
+
+        duplicates_removed = 0
 
         if os.path.exists(file_path):
-            try:
-                with open(file_path, 'r', encoding = 'utf-8') as f:
-                    existing_data = json.load(f)
-                
-                if current_data == existing_data:
-                    print(f"No changes detected. '{os.path.basename(file_path)}' is already up to date. Skipping save.")
-                    
-                    return None
-                    
-            except Exception as e:
-                print(f"Warning: Could not read existing file ({e}). Overwriting...")
+            if append:
+                try:
+                    existing_df = pd.read_json(file_path, orient = orient)
+                    combined_df = pd.concat([existing_df, export_df], ignore_index = True)
+
+                    initial_count = len(combined_df)
+                    combined_df.drop_duplicates(inplace = True)
+                    duplicates_removed = initial_count - len(combined_df)
+
+                    export_df = combined_df
+                    is_append_successful = True
+
+                except Exception as e:
+                    print(f"[WARNING] Append failed ({e}). Falling back to overwrite.")
+
+                    append = False
+
+            else:
+                try:
+                    json_str = export_df.to_json(orient = orient, force_ascii = force_ascii)
+                    current_data = json.loads(json_str)
+
+                    with open(file_path, 'r', encoding = 'utf-8') as f:
+                        existing_data = json.load(f)
+
+                    if current_data == existing_data:
+                        print(f" [SKIP] No changes detected. '{os.path.basename(file_path)}' is already up to date.")
+
+                        return None
+
+                except Exception as e:
+                    print(f"[WARNING] Could not read existing file for comparison ({e}). Overwriting...")
 
         os.makedirs(os.path.dirname(file_path), exist_ok = True)
-        
         export_df.to_json(file_path, orient = orient, force_ascii = force_ascii, indent = indent)
-        
-        print(" Save completed successfully!")
+
+        if is_append_successful:
+            print(f" [APPEND] Added {new_rows_count} new rows. Removed {duplicates_removed} duplicates. Total jobs: {len(export_df)}.")
+
+        else:
+            print(f" [OVERWRITE] Save completed successfully! Total rows: {len(export_df)}.")
 
         return None
 
-    
+
     def save_to_sql(
             self,
             table_name: str,
@@ -1613,7 +2047,7 @@ class JsonFile(pd.DataFrame):
                 Defaults to None (single batch).
             fast_executemany (bool): Enables `fast_executemany` for SQL Server
                 pyodbc connections when supported. Defaults to False.
-            if_exists (str): How to behave if the table already exists. 
+            if_exists (str): How to behave if the table already exists.
                 Options: 'fail', 'replace', 'append'. Defaults to 'append'.
             index (bool): Whether to write the DataFrame index as a SQL column.
                 Defaults to False.
@@ -1649,40 +2083,40 @@ class JsonFile(pd.DataFrame):
 
         if not table_name:
             print("Error: Missing table_name.")
-            
+
             return None
 
         if if_exists not in ['fail', 'replace', 'append']:
             print(f"Error: Invalid if_exists value '{if_exists}'. Use 'fail', 'replace', or 'append'.")
-           
+
             return None
 
         if not db_type:
             print("Error: Missing database_type.")
-            
+
             return None
 
         if db_type.startswith('sqlite'):
             if not db_name:
                 print("Error: Missing database_name for SQLite.")
-               
+
                 return None
 
             if db_name == ':memory:':
                 engine_url = "sqlite:///:memory:"
-           
+
             else:
                 engine_url = f"sqlite:///{db_name}"
 
         elif 'mssql' in db_type or 'sqlserver' in db_type:
             if not all([db_user, db_pass, db_host, db_port, db_name]):
                 print("Error: Missing SQL Server credentials")
-               
+
                 return None
 
             if not db_driver:
                 print("Error: Missing database_driver for SQL Server connection.")
-               
+
                 return None
 
             encoded_driver = urllib.parse.quote_plus(db_driver)
@@ -1696,14 +2130,14 @@ class JsonFile(pd.DataFrame):
 
             if not all([db_user, db_pass, db_host, db_port, db_name]):
                 print("Error: Missing database credentials")
-                
+
                 return None
 
             encoded_user = urllib.parse.quote_plus(db_user)
             encoded_pass = urllib.parse.quote_plus(db_pass)
-           
+
             engine_url = f"{db_type}://{encoded_user}:{encoded_pass}@{db_host}:{db_port}/{db_name}"
-                
+
         try:
             export_df = self.copy()
 
@@ -1712,10 +2146,10 @@ class JsonFile(pd.DataFrame):
                 export_df[col] = export_df[col].dt.tz_localize(None)
 
             engine = create_engine(engine_url, **engine_kwargs)
-            
+
 
             print(f"Pushing data to SQL table '{table_name}' at {db_host}...")
-            
+
             export_df.to_sql(
                 table_name,
                 con = engine,
@@ -1724,9 +2158,9 @@ class JsonFile(pd.DataFrame):
                 dtype = columns_types,
                 chunksize = chunk_size if chunk_size else None
             )
-            
+
             print("Database save completed successfully!")
-            
+
         except Exception as e:
             print(f"FATAL ERROR: Could not push to database. Reason: {e}")
 
@@ -1756,244 +2190,7 @@ class SearchFile(JsonFile):
         """
         if data is None and 'json_file_path' not in kwargs:
             raw_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Raw Data")
-            
+
             kwargs['json_file_path'] = os.path.join(raw_data_dir, f"search.json")
 
         super().__init__(data = data, *args, **kwargs)
-
-
-    def extract_entities_nlp(
-        self, 
-        *source_cols, 
-        lexicon_source: str | dict, 
-        save_every: int = 1000, 
-        inplace: bool = False,
-        noisey_terms: set | None = None,
-        **target_cols_and_json_keys
-    ) -> (Self | None):
-        """
-        Extract entities from free text by matching against a cached lexicon with
-        spaCy tokenization and lemmatization.
-
-        Notes:
-            Terms are loaded from a JSON file or dictionary, grouped by target
-            output column, and matched across the combined source text. Results
-            are cached per unique text snippet so repeat runs avoid reprocessing
-            the same content.
-
-        Args:
-            *source_cols: Text columns whose combined content will be searched.
-            lexicon_source (str | dict): Path to a lexicon JSON file or a
-                preloaded dictionary with equivalent structure.
-            save_every (int): Cache checkpoint frequency during NLP processing.
-                Defaults to 1000.
-            inplace (bool): If True, modifies the object directly and returns
-                None. Defaults to False.
-            noisey_terms (set | None): Terms that should be ignored even if they
-                are matched. Defaults to None.
-            **target_cols_and_json_keys: Mapping where each key is an output
-                column name and each value is a lexicon key or list of keys to
-                collect terms from.
-
-        Returns:
-            Self | None: The dataframe with extracted entity-list columns when
-            `inplace=False`, otherwise None.
-
-        Example:
-        ```
-            search_dataframe.extract_entities_nlp(
-                "title",
-                "description",
-                lexicon_source="skills_lexicon.json",
-                basic_skills=["skills", "technologies"]
-            )
-        ```
-        """
-        
-        if noisey_terms is None:
-            noisey_terms = set()
-
-        if not target_cols_and_json_keys:
-            print("Error: You must provide at least one target column and JSON key via kwargs.")
-            
-            return None if inplace else self.copy()
-
-        if isinstance(lexicon_source, str):
-            try:
-                with open(lexicon_source, 'r', encoding = 'utf-8') as f:
-                    lexicon_data = json.load(f)
-            
-            except Exception as e:
-                print(f"Error loading JSON file: {e}")
-                
-                return None if inplace else self.copy()
-        else:
-            lexicon_data = lexicon_source
-
-        term_dict = {}
-
-        for target_col, json_key in target_cols_and_json_keys.items():
-            keys_to_match = json_key if isinstance(json_key, list) else [json_key]
-            extracted_terms = set()
-            
-            stack = [(lexicon_data, False)]
-            
-            while stack:
-                current_node, is_inside = stack.pop()
-                
-                if isinstance(current_node, dict):
-                    for k, v in current_node.items():
-                        current_is_target = is_inside or (str(k) in keys_to_match)
-                        
-                        if current_is_target and isinstance(v, bool) and v is True:
-                            extracted_terms.add(str(k).strip().lower())
-                        
-                        elif current_is_target and isinstance(v, str):
-                            extracted_terms.add(str(v).strip().lower())
-                        
-                        elif isinstance(v, (dict, list)):
-                            stack.append((v, current_is_target))
-                            
-                elif isinstance(current_node, list):
-                    for item in current_node:
-                        if is_inside and isinstance(item, str):
-                            extracted_terms.add(str(item).strip().lower())
-                        
-                        elif isinstance(item, (dict, list)):
-                            stack.append((item, is_inside))
-
-            if extracted_terms:
-                term_dict[target_col] = list(extracted_terms)
-            
-            else:
-                print(f"Warning: No data found for keys '{keys_to_match}'. Skipping '{target_col}'.")
-
-        if not term_dict:
-            print("Error: No valid terms extracted from any specified JSON keys.")
-            
-            return None if inplace else self.copy()
-
-      
-        valid_sources = [col for col in source_cols if col in self.columns]
-        if not valid_sources:
-            print("Warning: No valid source columns found.")
-            
-            return None if inplace else self.copy()
-
-        result = self.copy() if not inplace else self
-        combined_series = result[valid_sources[0]].fillna('').astype(str)
-        
-        for col in valid_sources[1:]:
-            combined_series += " " + result[col].fillna('').astype(str)
-            
-        combined_text = combined_series.str.strip()
-        valid_mask = combined_text != ""
-        all_valid_texts = combined_text[valid_mask].unique().tolist()
-        
-        if not all_valid_texts:
-            print("No valid text found in the specified columns.")
-            return None if inplace else result
-
-    
-        func_name = "extract_entities_nlp"
-        caches = {}
-        
-        for target_col in term_dict.keys():
-            cache_obj = self.cache_manager.get_column_cache(func_name, target_col)
-            
-            caches[target_col] = cache_obj if isinstance(cache_obj, dict) else {}
-
-        texts_to_process = [
-            text for text in all_valid_texts 
-            if any(text not in caches[col]
-            for col in term_dict.keys())
-        ]
-
-        if texts_to_process:
-            print(f"Loading NLP Model and building Multi-Label Matcher...")
-            nlp = spacy.load("en_core_web_sm")
-            matcher = Matcher(nlp.vocab)
-            
-            for col_name, terms in term_dict.items():
-                all_patterns = []
-                
-                for term_doc in nlp.pipe(terms, disable = ["parser", "ner"]):
-                    pattern_lemma = []
-                    pattern_lower = []
-                   
-                    for token in term_doc:
-                        pattern_lemma.append({"LEMMA": {"IN": [token.lemma_.lower(), token.lemma_.title()]}})
-                        
-                        pattern_lower.append({"LOWER": token.text.lower()})
-                    
-                    if pattern_lemma:
-                        all_patterns.append(pattern_lemma)
-                    
-                    if pattern_lower:
-                        all_patterns.append(pattern_lower)
-                
-                matcher.add(col_name, all_patterns) 
-            
-            num_texts = len(texts_to_process)
-            print(f"Extracting smart entities from {num_texts} rows simultaneously...")
-            
-            cache_updated = False
-
-            for i, doc in enumerate(nlp.pipe(texts_to_process, batch_size = 100)):
-                original_text = texts_to_process[i]
-                found_entities = {col: set() for col in term_dict.keys()}
-                
-                try:
-                    matches = matcher(doc)
-                   
-                    for match_id, start, end in matches:
-                        col_name = nlp.vocab.strings[match_id]
-                        span = doc[start:end]
-                        clean_skill = " ".join([t.lemma_ for t in span]).title()
-                        
-                        is_valid = True
-                        
-                        if len(clean_skill) == 1:
-                            if not span.text.isupper() or not span[0].is_alpha:
-                                is_valid = False
-                                
-                        if len(span) == 1 and is_valid:
-                            invalid_pos = {"VERB", "ADV", "PRON", "DET", "ADP", "CCONJ", "SCONJ", "AUX", "SYM", "PUNCT"}
-                            
-                            if span[0].pos_ in invalid_pos:
-                                is_valid = False
-
-                        if clean_skill.lower() in noisey_terms:
-                            is_valid = False
-
-                        if is_valid:
-                            found_entities[col_name].add(clean_skill)
-                            
-                    for col in term_dict.keys():
-                        caches[col][original_text] = list(found_entities[col])
-                        
-                    cache_updated = True
-                
-                except Exception as e:
-                    print(f"Error processing text snippet: {e}")
-                
-                if (i + 1) % save_every == 0 and cache_updated:
-                    for col in term_dict.keys():
-                        self.cache_manager.save_function_cache(func_name)
-                    
-                    print(f"Checkpoint: Safely saved {i + 1} / {num_texts}...")
-                    
-                    cache_updated = False
-
-            if cache_updated:
-                for col in term_dict.keys():
-                    self.cache_manager.save_function_cache(func_name)
-                
-                print("All NLP extraction completed and safely cached!")
-        else:
-            print("All requested data is already cached. No NLP processing needed.")
-
-        for col in term_dict.keys():
-            result[col] = [caches[col].get(text, []) for text in combined_text]
-            
-        return None if inplace else result
