@@ -595,12 +595,23 @@ def run_pipeline(days_window: int = 90, safety_pages_budget: int = 1000, start_p
     )
 
     sql_data_types = {
-        'id': NVARCHAR(255), 'title': NVARCHAR(500), 'category_label': NVARCHAR(255),
-        'category_tag': NVARCHAR(255), 'seniority_level': NVARCHAR(100),
-        'company_name': NVARCHAR(500), 'created': DateTime(), 'created_year': Integer(),
-        'contract_type': NVARCHAR(100), 'contract_time': NVARCHAR(100),
-        'salary_min': Float(), 'salary_max': Float(), 'salary_avg': Float(),
-        'latitude': Float(), 'longitude': Float(), 'state_or_gov': NVARCHAR(255),
+        'id': NVARCHAR(255),
+        'title': NVARCHAR(500),
+        'field_label': NVARCHAR(255),
+        'category_label': NVARCHAR(255),
+        'category_tag': NVARCHAR(255),
+        'seniority_level': NVARCHAR(100),
+        'company_name': NVARCHAR(500),
+        'created': DateTime(),
+        'created_year': Integer(),
+        'contract_type': NVARCHAR(100),
+        'contract_time': NVARCHAR(100),
+        'salary_min': Float(),
+        'salary_max': Float(),
+        'salary_avg': Float(),
+        'latitude': Float(),
+        'longitude': Float(),
+        'state_or_gov': NVARCHAR(255),
         'country': NVARCHAR(255),
     }
 
