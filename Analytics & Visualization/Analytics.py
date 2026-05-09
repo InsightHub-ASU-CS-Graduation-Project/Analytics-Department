@@ -87,7 +87,6 @@ class Analyzer ():
             '<=': operator.le,
             '!=': operator.ne,
             '==': operator.eq,
-            'contains': lambda series, val: series.astype(str).str.contains(str(val), case = False, na = False)
         }
 
         for col, value in filters.items():
@@ -99,13 +98,14 @@ class Analyzer ():
                     col_series = filtered_dataframe[col]
 
                     for op, val in value.items():
-                        if op in op_map:
+                        if op in op_map or op == 'contains':
                             try:
                                 if op == 'contains':
-                                    mask = col_series.astype(str).str.contains(str(val), case = False, na = False, regex = False)
+                                    mask = col_series.fillna('').astype(str).str.contains(str(val).strip(), case = False, na = False, regex = False)
                                 
                                 elif op in {'>', '<', '>=', '<='}:
                                     func = op_map[op]
+                                    
                                     left = pd.to_numeric(col_series, errors = 'coerce')
                                     right = pd.to_numeric(pd.Series([val]), errors = 'coerce').iloc[0]
 
@@ -122,9 +122,8 @@ class Analyzer ():
                                 col_series = filtered_dataframe[col]
 
                             except Exception as e:
-                                print(
-                                    f"Failed to apply filter for col{col!r}, operator {op!r} with value {val!r} Error: {e}"
-                                )
+                                print(f"Failed to apply filter for col {col!r}, operator {op!r} with value {val!r} Error: {e}")
+                                
                                 continue
                 
                 else:
@@ -538,7 +537,7 @@ class Analyzer ():
             value = value.item()
             
         kpi_card = {
-            "data": round(value, round_value) if isinstance(value, float) else value,
+            "data": round(value, round_value) if isinstance(value, float) and round_value else int(value) if isinstance(value, (float, np.int64, int)) else value,
             "title": kwargs.pop("title", column)
         }
 
