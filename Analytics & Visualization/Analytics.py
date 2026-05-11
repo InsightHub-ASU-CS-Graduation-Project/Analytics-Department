@@ -4,7 +4,7 @@ import pandas as pd
 from typing import Any
 
 
-class Analyzer ():
+class Analyzer:
     """
     Provide reusable analytics helpers for dashboard and API responses.
 

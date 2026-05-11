@@ -7,7 +7,7 @@ def get_home_page_config(analyzer):
             agg_func = 'count',
             round_value = 0,
             filters = req.filters, 
-            title = "Job Drop",
+            title = "Jobs This Season 🍂",
             suffix = "Jobs",
             type = "card"
         ),
@@ -25,8 +25,8 @@ def get_home_page_config(analyzer):
             
             {
                 "data": round(sum(d['y'] for d in data_list) / len(data_list), 0) if data_list else 0,
-                "title": "Jobs per Hour",
-                "suffix": "jobs/h",
+                "title": "Jobs by The Hour",
+                "suffix": "Jobs/h",
                 "type": "card",
             }
         )[-1],
@@ -110,6 +110,48 @@ def get_home_page_config(analyzer):
         )[-1],
 
 
+        "Top 6 Jobs": lambda req: analyzer.get_categorical_distribution(
+            x_col = "title",
+            top_n = 6,
+            show_others = False,
+            filters = req.filters,
+            rules = req.rules,
+            orient = req.orient if req.orient else 'records',
+            title = "Top Roles by Volume",
+            type = "treemap",
+            description = "No guessing needed. This chart shows you exactly which roles have the most active job postings right now."
+        ),
+
+
+        "Top Hiring Companies": lambda req: analyzer.get_categorical_distribution(
+            x_col = "company_name",
+            top_n = 5,
+            show_others = False,
+            filters = req.filters,
+            orient = req.orient if req.orient else 'records',
+            title = "The Hiring Giants",
+            type = "bar",
+            tooltip_format = "Company: {point.x}<br>Openings: {point.y} Jobs",
+            description = "Who’s currently dominating the market? Here are the top companies dropping the most opportunities lately."
+        ),
+
+
+        "Top Investing Companies": lambda req: analyzer.get_numerical_aggregation(
+            x_col = "company_name",
+            y_col = "salary_max",
+            agg_func = "sum",
+            round_value = 0,
+            top_n = 5,
+            show_others = False,
+            filters = {**(req.filters or {}), "company_name": {"!=": "Not Specified"}},
+            orient = req.orient if req.orient else 'records',
+            title = "The Top Spenders",
+            type = "bar",
+            tooltip_format = "Company: {point.x}<br>Total Investment: ${point.y}",
+            description = "Jobs are cool, but now let's talk money. See which companies are investing the most cash into their teams this season."
+        ),
+
+
         "Seniority Level Distribution": lambda req: analyzer.get_categorical_distribution(
                 x_col = "seniority_level",
                 top_n = 4,
@@ -157,48 +199,6 @@ def get_home_page_config(analyzer):
         )[-1],
 
 
-        "Top 6 Jobs": lambda req: analyzer.get_categorical_distribution(
-            x_col = "title",
-            top_n = 6,
-            show_others = False,
-            filters = req.filters,
-            rules = req.rules,
-            orient = req.orient if req.orient else 'records',
-            title = "Top Roles by Volume",
-            type = "treemap",
-            description = "No guessing needed. This chart shows you exactly which roles have the most active job postings right now."
-        ),
-
-
-        "Top Hiring Companies": lambda req: analyzer.get_categorical_distribution(
-            x_col = "company_name",
-            top_n = 5,
-            show_others = False,
-            filters = req.filters,
-            orient = req.orient if req.orient else 'records',
-            title = "Top 5 Companies by Job Volume",
-            type = "bar",
-            tooltip_format = "Company: {point.x}<br>Openings: {point.y} Jobs",
-            description = ""
-        ),
-
-
-        "Top Investing Companies": lambda req: analyzer.get_numerical_aggregation(
-            x_col = "company_name",
-            y_col = "salary_max",
-            agg_func = "sum",
-            round_value = 0,
-            top_n = 5,
-            show_others = False,
-            filters = {**(req.filters or {}), "company_name": {"!=": "Not Specified"}},
-            orient = req.orient if req.orient else 'records',
-            title = "Top 5 Companies by Financial Investment",
-            type = "bar",
-            tooltip_format = "Company: {point.x}<br>Total Investment: ${point.y}",
-            description = ""
-        ),
-
-
         "Salary Growth vs Junior Base": lambda req: (
             res := analyzer.get_numerical_aggregation(
                 x_col = "seniority_level",
@@ -238,56 +238,56 @@ def get_home_page_config(analyzer):
         )[-1],
 
 
-    "Gig Economy Trend": lambda req: (
-            res := analyzer.get_categorical_distribution(
-                x_col = "seniority_level",
-                top_n = 5,
-                show_others = False,
-                filters = {
-                    **(req.filters or {}), 
-                    "seniority_level": ["Junior", "Mid-Level", "Senior", "Lead"]
-                },
-                orient = req.orient if req.orient else 'records',
-                title = "Gig Economy Trend by Seniority",
-                type = "line",
-                tooltip_format = "Seniority: {point.x}<br>Freelance/Contract roles: {point.y}%",
-                description = ""
-            ),
+        "Gig Economy Trend": lambda req: (
+                res := analyzer.get_categorical_distribution(
+                    x_col = "seniority_level",
+                    top_n = 5,
+                    show_others = False,
+                    filters = {
+                        **(req.filters or {}), 
+                        "seniority_level": ["Junior", "Mid-Level", "Senior", "Lead"]
+                    },
+                    orient = req.orient if req.orient else 'records',
+                    title = "The Flex Work Curve %",
+                    type = "line",
+                    tooltip_format = "Seniority: {point.x}<br>Freelance/Contract roles: {point.y}%",
+                    description = "The higher you climb, the more flexibility you get. Check out the rising percentage of contract and non-permanent gigs by seniority.",
+                ),
 
-            [
-                row.update({
-                    "total_jobs": row.pop('y'),
-                    
-                    "flexible_jobs": int(
-                        analyzer.get_kpi_value(
-                            column = "id",
-                            agg_func = "count",
-                            round_value = 0,
-                            filters = {
-                                **(req.filters or {}), 
-                                "seniority_level": row['x'],
-                                "contract_type": ["Contract", "Freelance"]
-                            }
-                        ).get("data") or 0
-                    )
-                }) 
-                for row in res.get("data", [])
-            ],
+                [
+                    row.update({
+                        "total_jobs": row.pop('y'),
+                        
+                        "flexible_jobs": int(
+                            analyzer.get_kpi_value(
+                                column = "id",
+                                agg_func = "count",
+                                round_value = 0,
+                                filters = {
+                                    **(req.filters or {}), 
+                                    "seniority_level": row['x'],
+                                    "contract_type": ["Contract", "Freelance"]
+                                }
+                            ).get("data") or 0
+                        )
+                    }) 
+                    for row in res.get("data", [])
+                ],
 
-            [
-                row.update({
-                    "y": round((row['flexible_jobs'] / row['total_jobs']) * 100, 1) if row['total_jobs'] > 0 else 0
-                }) 
-                for row in res.get("data", [])
-            ],
+                [
+                    row.update({
+                        "y": round((row['flexible_jobs'] / row['total_jobs']) * 100, 1) if row['total_jobs'] > 0 else 0
+                    }) 
+                    for row in res.get("data", [])
+                ],
 
-            level_order := {'Junior': 1, 'Mid-Level': 2, 'Senior': 3, 'Lead': 4},
-            res.update({
-                "data": sorted(res.get("data", []), key = lambda d: level_order.get(d['x'], 99))
-            }),
+                level_order := {'Junior': 1, 'Mid-Level': 2, 'Senior': 3, 'Lead': 4},
+                res.update({
+                    "data": sorted(res.get("data", []), key = lambda d: level_order.get(d['x'], 99))
+                }),
 
-            res
-        )[-1],
+                res
+            )[-1],
         
     }
 
@@ -300,7 +300,7 @@ def get_explore_page_config(analyzer):
             agg_func = 'count',
             round_value = 0,
             filters = req.filters, 
-            title = "Job Drop",
+            title = "Jobs This Season 🍂",
             suffix = "Jobs",
             type = "card"
         ),
@@ -318,8 +318,8 @@ def get_explore_page_config(analyzer):
             
             {
                 "data": round(sum(d['y'] for d in data_list) / len(data_list), 0) if data_list else 0,
-                "title": "Jobs per Hour",
-                "suffix": "/h",
+                "title": "Jobs by The Hour",
+                "suffix": "Jobs/h",
                 "type": "card",
             }
         )[-1],
@@ -403,6 +403,48 @@ def get_explore_page_config(analyzer):
         )[-1],
 
 
+        "Top 6 Jobs": lambda req: analyzer.get_categorical_distribution(
+            x_col = "title",
+            top_n = 6,
+            show_others = False,
+            filters = req.filters,
+            rules = req.rules,
+            orient = req.orient if req.orient else 'records',
+            title = "Top Roles by Volume",
+            type = "treemap",
+            description = "No guessing needed. This chart shows you exactly which roles have the most active job postings right now."
+        ),
+
+
+        "Top Hiring Companies": lambda req: analyzer.get_categorical_distribution(
+            x_col = "company_name",
+            top_n = 5,
+            show_others = False,
+            filters = req.filters,
+            orient = req.orient if req.orient else 'records',
+            title = "The Hiring Giants",
+            type = "bar",
+            tooltip_format = "Company: {point.x}<br>Openings: {point.y} Jobs",
+            description = "Who’s currently dominating the market? Here are the top companies dropping the most opportunities lately."
+        ),
+
+
+        "Top Investing Companies": lambda req: analyzer.get_numerical_aggregation(
+            x_col = "company_name",
+            y_col = "salary_max",
+            agg_func = "sum",
+            round_value = 0,
+            top_n = 5,
+            show_others = False,
+            filters = {**(req.filters or {}), "company_name": {"!=": "Not Specified"}},
+            orient = req.orient if req.orient else 'records',
+            title = "The Top Spenders",
+            type = "bar",
+            tooltip_format = "Company: {point.x}<br>Total Investment: ${point.y}",
+            description = "Jobs are cool, but now let's talk money. See which companies are investing the most cash into their teams this season."
+        ),
+
+
         "Seniority Level Distribution": lambda req: analyzer.get_categorical_distribution(
                 x_col = "seniority_level",
                 top_n = 4,
@@ -450,48 +492,6 @@ def get_explore_page_config(analyzer):
         )[-1],
 
 
-        "Top 6 Jobs": lambda req: analyzer.get_categorical_distribution(
-            x_col = "title",
-            top_n = 6,
-            show_others = False,
-            filters = req.filters,
-            rules = req.rules,
-            orient = req.orient if req.orient else 'records',
-            title = "Top Roles by Volume",
-            type = "treemap",
-            description = "No guessing needed. This chart shows you exactly which roles have the most active job postings right now."
-        ),
-
-
-        "Top Hiring Companies": lambda req: analyzer.get_categorical_distribution(
-            x_col = "company_name",
-            top_n = 5,
-            show_others = False,
-            filters = req.filters,
-            orient = req.orient if req.orient else 'records',
-            title = "Top 5 Companies by Job Volume",
-            type = "bar",
-            tooltip_format = "Company: {point.x}<br>Openings: {point.y} Jobs",
-            description = ""
-        ),
-
-
-        "Top Investing Companies": lambda req: analyzer.get_numerical_aggregation(
-            x_col = "company_name",
-            y_col = "salary_max",
-            agg_func = "sum",
-            round_value = 0,
-            top_n = 5,
-            show_others = False,
-            filters = {**(req.filters or {}), "company_name": {"!=": "Not Specified"}},
-            orient = req.orient if req.orient else 'records',
-            title = "Top 5 Companies by Financial Investment",
-            type = "bar",
-            tooltip_format = "Company: {point.x}<br>Total Investment: ${point.y}",
-            description = ""
-        ),
-
-
         "Salary Growth vs Junior Base": lambda req: (
             res := analyzer.get_numerical_aggregation(
                 x_col = "seniority_level",
@@ -531,55 +531,55 @@ def get_explore_page_config(analyzer):
         )[-1],
 
 
-    "Gig Economy Trend": lambda req: (
-            res := analyzer.get_categorical_distribution(
-                x_col = "seniority_level",
-                top_n = 5,
-                show_others = False,
-                filters = {
-                    **(req.filters or {}), 
-                    "seniority_level": ["Junior", "Mid-Level", "Senior", "Lead"]
-                },
-                orient = req.orient if req.orient else 'records',
-                title = "Gig Economy Trend by Seniority",
-                type = "line",
-                tooltip_format = "Seniority: {point.x}<br>Freelance/Contract roles: {point.y}%",
-                description = ""
-            ),
+        "Gig Economy Trend": lambda req: (
+                res := analyzer.get_categorical_distribution(
+                    x_col = "seniority_level",
+                    top_n = 5,
+                    show_others = False,
+                    filters = {
+                        **(req.filters or {}), 
+                        "seniority_level": ["Junior", "Mid-Level", "Senior", "Lead"]
+                    },
+                    orient = req.orient if req.orient else 'records',
+                    title = "The Flex Work Curve %",
+                    type = "line",
+                    tooltip_format = "Seniority: {point.x}<br>Freelance/Contract roles: {point.y}%",
+                    description = "The higher you climb, the more flexibility you get. Check out the rising percentage of contract and non-permanent gigs by seniority.",
+                ),
 
-            [
-                row.update({
-                    "total_jobs": row.pop('y'),
-                    
-                    "flexible_jobs": int(
-                        analyzer.get_kpi_value(
-                            column = "id",
-                            agg_func = "count",
-                            round_value = 0,
-                            filters = {
-                                **(req.filters or {}), 
-                                "seniority_level": row['x'],
-                                "contract_type": ["Contract", "Freelance"]
-                            }
-                        ).get("data") or 0
-                    )
-                }) 
-                for row in res.get("data", [])
-            ],
+                [
+                    row.update({
+                        "total_jobs": row.pop('y'),
+                        
+                        "flexible_jobs": int(
+                            analyzer.get_kpi_value(
+                                column = "id",
+                                agg_func = "count",
+                                round_value = 0,
+                                filters = {
+                                    **(req.filters or {}), 
+                                    "seniority_level": row['x'],
+                                    "contract_type": ["Contract", "Freelance"]
+                                }
+                            ).get("data") or 0
+                        )
+                    }) 
+                    for row in res.get("data", [])
+                ],
 
-            [
-                row.update({
-                    "y": round((row['flexible_jobs'] / row['total_jobs']) * 100, 1) if row['total_jobs'] > 0 else 0
-                }) 
-                for row in res.get("data", [])
-            ],
+                [
+                    row.update({
+                        "y": round((row['flexible_jobs'] / row['total_jobs']) * 100, 1) if row['total_jobs'] > 0 else 0
+                    }) 
+                    for row in res.get("data", [])
+                ],
 
-            level_order := {'Junior': 1, 'Mid-Level': 2, 'Senior': 3, 'Lead': 4},
-            res.update({
-                "data": sorted(res.get("data", []), key = lambda d: level_order.get(d['x'], 99))
-            }),
+                level_order := {'Junior': 1, 'Mid-Level': 2, 'Senior': 3, 'Lead': 4},
+                res.update({
+                    "data": sorted(res.get("data", []), key = lambda d: level_order.get(d['x'], 99))
+                }),
 
-            res
-        )[-1],
+                res
+            )[-1],
         
     }
